@@ -2,6 +2,7 @@ plugins {
     alias(libs.plugins.android.application)
     alias(libs.plugins.kotlin.android)
     alias(libs.plugins.kotlin.compose)
+    alias(libs.plugins.kotlin.serialization)
 }
 
 android {
@@ -39,8 +40,28 @@ android {
     }
 }
 
+// The conformance suite in src/test talks to a real table-server; DESIGN §7 takes
+// its address from the environment or a Gradle property and skips without one.
+tasks.withType<Test>().configureEach {
+    for (name in listOf("TABLE_URL", "TABLE_API_KEY", "TABLE_TTL_SECONDS")) {
+        val value = providers.environmentVariable(name).orNull
+            ?: providers.gradleProperty(name).orNull
+        if (value != null) systemProperty(name, value)
+    }
+    // The server is an input Gradle cannot fingerprint, so a green run must never
+    // let the next one be skipped as up-to-date.
+    outputs.upToDateWhen { false }
+    testLogging {
+        events("passed", "skipped", "failed")
+        showStandardStreams = true
+        exceptionFormat = org.gradle.api.tasks.testing.logging.TestExceptionFormat.FULL
+    }
+}
+
 dependencies {
 
+    implementation(libs.okhttp)
+    implementation(libs.kotlinx.serialization.json)
     implementation(libs.androidx.core.ktx)
     implementation(libs.androidx.lifecycle.runtime.ktx)
     implementation(libs.androidx.activity.compose)
@@ -50,6 +71,7 @@ dependencies {
     implementation(libs.androidx.ui.tooling.preview)
     implementation(libs.androidx.material3)
     testImplementation(libs.junit)
+    testImplementation(kotlin("test"))
     androidTestImplementation(libs.androidx.junit)
     androidTestImplementation(libs.androidx.espresso.core)
     androidTestImplementation(platform(libs.androidx.compose.bom))
