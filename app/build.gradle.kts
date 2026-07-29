@@ -43,7 +43,7 @@ android {
 // The conformance suite in src/test talks to a real table-server; DESIGN §7 takes
 // its address from the environment or a Gradle property and skips without one.
 tasks.withType<Test>().configureEach {
-    for (name in listOf("TABLE_URL", "TABLE_API_KEY", "TABLE_TTL_SECONDS")) {
+    for (name in listOf("TABLE_URL", "TABLE_API_KEY", "TABLE_TTL_SECONDS", "TABLE_TEST_FAULTS")) {
         val value = providers.environmentVariable(name).orNull
             ?: providers.gradleProperty(name).orNull
         if (value != null) systemProperty(name, value)

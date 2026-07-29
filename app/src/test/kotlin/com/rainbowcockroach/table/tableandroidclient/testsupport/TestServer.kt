@@ -9,6 +9,7 @@ import java.io.File
 import java.io.IOException
 import java.io.InputStream
 import java.util.Collections
+import java.util.concurrent.atomic.AtomicReference
 import kotlin.random.Random
 
 /**
@@ -21,19 +22,25 @@ object TestServer {
     val url: String? = setting("TABLE_URL")
     val apiKey: String? = setting("TABLE_API_KEY")
     val ttlSeconds: Long? = setting("TABLE_TTL_SECONDS")?.toLongOrNull()
+    val faultsEnabled: Boolean = setting("TABLE_TEST_FAULTS") == "1"
 
     val missingConfigMessage =
         "no table-server configured — start one and set TABLE_URL and TABLE_API_KEY " +
             "(see table-server/CLAUDE.md 'Dev loop')"
 
+    val faultsDisabledMessage =
+        "TABLE_TEST_FAULTS is not 1 — the dev server and the tests both need it set " +
+            "for X-Test-Drop-After to do anything"
+
     fun unreachableMessage(cause: Throwable) = "table-server at $url is not reachable: $cause"
 
     /** Null when the server is configured but not answering, so tests can skip rather than fail. */
-    fun clientOrNull(log: RequestLog? = null): TableClient? {
+    fun clientOrNull(vararg interceptors: Interceptor): TableClient? {
         val host = url ?: return null
         val key = apiKey ?: return null
-        val http = log?.let { defaultHttpClient().newBuilder().addInterceptor(it).build() }
-            ?: defaultHttpClient()
+        val http = defaultHttpClient().newBuilder()
+            .apply { interceptors.forEach(::addInterceptor) }
+            .build()
         return TableClient(host, key, allowInsecureHttp = true, baseHttpClient = http)
     }
 
@@ -71,6 +78,33 @@ class RequestLog : Interceptor {
             status = response.code,
         )
         return response
+    }
+}
+
+/**
+ * Arms the server's `X-Test-Drop-After` fault (root DESIGN §2) on the next request of a
+ * given method.
+ *
+ * One-shot by construction: the attempt that follows a drop is the resume being tested, so
+ * it has to reach the server intact.
+ */
+class FaultInjector : Interceptor {
+
+    private data class Fault(val method: String, val afterBytes: Long)
+
+    private val armed = AtomicReference<Fault?>(null)
+
+    fun dropAfter(method: String, afterBytes: Long) = armed.set(Fault(method, afterBytes))
+
+    override fun intercept(chain: Interceptor.Chain): Response {
+        val request = chain.request()
+        val fault = armed.get()
+        if (fault == null || fault.method != request.method || !armed.compareAndSet(fault, null)) {
+            return chain.proceed(request)
+        }
+        return chain.proceed(
+            request.newBuilder().header("X-Test-Drop-After", fault.afterBytes.toString()).build()
+        )
     }
 }
 

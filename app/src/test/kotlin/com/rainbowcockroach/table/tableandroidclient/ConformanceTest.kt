@@ -7,9 +7,11 @@ import com.rainbowcockroach.table.tableandroidclient.api.RangeNotSatisfiableExce
 import com.rainbowcockroach.table.tableandroidclient.api.TableAuthException
 import com.rainbowcockroach.table.tableandroidclient.api.TableClient
 import com.rainbowcockroach.table.tableandroidclient.api.TableFile
+import com.rainbowcockroach.table.tableandroidclient.api.isRetryable
 import com.rainbowcockroach.table.tableandroidclient.crypto.TRANSFER_BUFFER_BYTES
 import com.rainbowcockroach.table.tableandroidclient.crypto.sha256Hex
 import com.rainbowcockroach.table.tableandroidclient.testsupport.FailingUploadSource
+import com.rainbowcockroach.table.tableandroidclient.testsupport.FaultInjector
 import com.rainbowcockroach.table.tableandroidclient.testsupport.RequestLog
 import com.rainbowcockroach.table.tableandroidclient.testsupport.TestServer
 import com.rainbowcockroach.table.tableandroidclient.testsupport.randomFile
@@ -43,11 +45,12 @@ import kotlin.test.assertTrue
 private const val MIB = 1024 * 1024
 private val BOGUS_SHA = "0".repeat(64)
 
+/** Scenario 10's drop offset, kept identical to the shell scenario's. */
+private const val DROP = 300_000L
+
 /**
  * The server's conformance scenarios re-run through this client's real code paths
  * (DESIGN §7). Each test maps to one script in `table-server/conformance/scenarios/`.
- *
- * Fault-injected drops (scenario 10) are checkpoint C2 and are not covered here.
  */
 class ConformanceTest {
 
@@ -55,13 +58,14 @@ class ConformanceTest {
     val scratch = TemporaryFolder()
 
     private val log = RequestLog()
+    private val faults = FaultInjector()
     private lateinit var client: TableClient
     private lateinit var uploader: Uploader
     private lateinit var downloader: Downloader
 
     @Before
     fun connectToServer() {
-        val candidate = TestServer.clientOrNull(log)
+        val candidate = TestServer.clientOrNull(log, faults)
         assumeTrue(TestServer.missingConfigMessage, candidate != null)
         val connected = candidate!!
         try {
@@ -147,7 +151,7 @@ class ConformanceTest {
      * to commit, the retry continues from there rather than starting over.
      *
      * A locally aborted connection resets rather than draining, so how much lands is up to
-     * the kernel; scenario 10 (checkpoint C2) is where the drop offset is exact.
+     * the kernel; scenario 10 is where the drop offset is exact.
      */
     @Test
     fun `an upload whose source dies mid-stream resumes from the server's offset`() {
@@ -337,7 +341,93 @@ class ConformanceTest {
         }
     }
 
+    // --- 10_fault_injection: an exact-byte drop, both directions (rules 2, 5) --------
+
+    @Test
+    fun `scenario 10 - a download dropped at an exact byte resumes from the partial file`() {
+        assumeFaults()
+        val source = randomFile(scratch.root, "fault_dl.bin", MIB)
+        val sourceHash = sha256Hex(source)
+        val uploaded = uploadFully(source)
+        val temp = scratch.newFile("fault_dl.part")
+
+        faults.dropAfter("GET", DROP)
+        val dropped = assertFailsWith<IOException> { downloader.download(DownloadTarget(uploaded), temp) }
+        assertTrue(dropped.isRetryable, "a cut connection is what backoff exists for")
+        assertEquals(DROP, temp.length(), "the server sends exactly the armed byte count")
+
+        log.clear()
+        var lowestProgress = Long.MAX_VALUE
+        val outcome = downloader.download(DownloadTarget(uploaded), temp) {
+            lowestProgress = minOf(lowestProgress, it)
+        }
+
+        val verified = assertIs<DownloadOutcome.Verified>(outcome)
+        assertEquals(AckResult.DELETED, verified.ack)
+        assertEquals(sourceHash, verified.sha256)
+        assertContentEquals(source.readBytes(), temp.readBytes())
+        assertTrue(lowestProgress > DROP, "the resumed download restarted at $lowestProgress")
+
+        val resumeGet = assertNotNull(log.of("GET").firstOrNull())
+        assertEquals("bytes=$DROP-", resumeGet.range, "rule 5: Range comes from the partial file's size")
+        assertEquals(206, resumeGet.status)
+    }
+
+    @Test
+    fun `scenario 10 - an upload dropped at an exact byte resumes from the committed offset`() {
+        assumeFaults()
+        val source = randomFile(scratch.root, "fault_ul.bin", MIB)
+        val sourceHash = sha256Hex(source)
+        val uploadSource = FileUploadSource(source)
+        val session = uploader.createSession(uploadSource)
+
+        faults.dropAfter("PATCH", DROP)
+        val dropped = assertFailsWith<IOException> { uploader.upload(session, uploadSource) }
+        assertTrue(dropped.isRetryable, "a cut connection is what backoff exists for")
+        assertEquals(
+            DROP, client.uploadOffset(session.id),
+            "the server commits exactly the bytes it read before the drop",
+        )
+
+        assertResumesFrom(DROP) { uploader.upload(session, uploadSource) }
+        assertEquals(sourceHash, downloadVerified(session.id, source.length(), sourceHash).sha256)
+    }
+
+    /**
+     * The digest of a resumed download is rebuilt from the temp file rather than carried
+     * across attempts (DESIGN §2), so a second drop has to land on an already-partial file
+     * to exercise that path for real. The drop offset is relative to the range body.
+     */
+    @Test
+    fun `a download dropped twice keeps accumulating instead of restarting`() {
+        assumeFaults()
+        val source = randomFile(scratch.root, "fault_twice.bin", MIB)
+        val sourceHash = sha256Hex(source)
+        val uploaded = uploadFully(source)
+        val target = DownloadTarget(uploaded)
+        val temp = scratch.newFile("fault_twice.part")
+
+        val secondDrop = 200_000L
+        faults.dropAfter("GET", DROP)
+        assertFailsWith<IOException> { downloader.download(target, temp) }
+        faults.dropAfter("GET", secondDrop)
+        assertFailsWith<IOException> { downloader.download(target, temp) }
+        assertEquals(DROP + secondDrop, temp.length(), "the second attempt appended rather than restarted")
+
+        log.clear()
+        val verified = assertIs<DownloadOutcome.Verified>(downloader.download(target, temp))
+        assertEquals(sourceHash, verified.sha256, "rule 6: the rebuilt digest covers the whole file")
+        assertContentEquals(source.readBytes(), temp.readBytes())
+
+        assertEquals(
+            listOf("bytes=${DROP + secondDrop}-"), log.of("GET").map { it.range },
+            "rule 5: one resume request, from the partial file's size",
+        )
+    }
+
     // --- helpers --------------------------------------------------------------------
+
+    private fun assumeFaults() = assumeTrue(TestServer.faultsDisabledMessage, TestServer.faultsEnabled)
 
     private fun uploadFully(source: File): TableFile {
         val uploadSource: UploadSource = FileUploadSource(source)
