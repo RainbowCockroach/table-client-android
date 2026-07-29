@@ -53,22 +53,27 @@ http://** — conformance rule 13 refuses the host without it. A dev server star
 5 s `TABLE_TTL` above expires files faster than you can tap; use `TABLE_TTL=30m` for a
 manual pass.
 
-## Releases (`.gitlab-ci.yml`)
+## Releases (`.github/workflows/release.yml`)
 
-Every push to the default branch builds a release APK, publishes it to the generic package
-registry, and creates a GitLab Release for it. The version is derived from the build number
-rather than committed: `versionName` = `baseVersionName` in `gradle.properties` + the pipeline
-IID (`1.0.42`), `versionCode` = the pipeline IID. A final job deletes every other release, its
-tag and its package, so exactly one release exists at a time.
+Every push to `main` builds a release APK and publishes it as a GitHub Release, then deletes
+every other release and its tag — exactly one exists at a time. The version is derived from
+the build number rather than committed: `versionName` = `baseVersionName` in
+`gradle.properties` + the workflow run number (`1.0.42`), `versionCode` = the run number.
 
 Reproduce a CI version locally with `./gradlew assembleRelease -PbuildNumber=42`.
 
-Set these CI/CD variables before the first run:
+Set these repository secrets (Settings → Secrets and variables → Actions) before the first
+run. Without them the workflow still succeeds, but the APK is unsigned and cannot be
+installed; the run logs a warning saying so.
 
-| Variable | Notes |
+| Secret | Notes |
 | --- | --- |
-| `ANDROID_KEYSTORE_BASE64` | `base64 -i release.keystore \| tr -d '\n'`, type Variable (not File). Without it the APK builds unsigned and cannot be installed. |
-| `ANDROID_KEYSTORE_PASSWORD` | masked |
+| `ANDROID_KEYSTORE_BASE64` | `base64 -i release.keystore \| tr -d '\n'` |
+| `ANDROID_KEYSTORE_PASSWORD` | |
 | `ANDROID_KEY_ALIAS` | |
-| `ANDROID_KEY_PASSWORD` | masked |
-| `GITLAB_API_TOKEN` | Project access token, Maintainer role + `api` scope. `CI_JOB_TOKEN` cannot delete releases, tags or packages, so the cleanup job needs its own. |
+| `ANDROID_KEY_PASSWORD` | |
+
+The keystore is the app's identity: Android refuses an update signed with a different key,
+so back it up outside the repo and never rotate it. Renaming or recreating this workflow
+resets the run number, which would push `versionCode` backwards and break upgrades — bump
+`baseVersionName` if that ever happens.

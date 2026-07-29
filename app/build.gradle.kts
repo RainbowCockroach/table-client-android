@@ -5,15 +5,15 @@ plugins {
     alias(libs.plugins.kotlin.serialization)
 }
 
-// CI is the source of the build number: GitLab's pipeline IID increments once per pipeline
-// on the project, so versionCode never goes backwards. Local builds fall back to 1.
-val buildNumber = (System.getenv("CI_PIPELINE_IID")
+// CI is the source of the build number: GITHUB_RUN_NUMBER increments once per run of the
+// release workflow, so versionCode never goes backwards. Local builds fall back to 1.
+val buildNumber = (System.getenv("GITHUB_RUN_NUMBER")
     ?: providers.gradleProperty("buildNumber").orNull
     ?: "1").toInt()
 val baseVersionName = providers.gradleProperty("baseVersionName").get()
 
 // Release signing comes from the environment so the keystore never lives in the repo.
-// Absent it, AGP falls back to an unsigned release APK (see .gitlab-ci.yml).
+// Absent it, AGP falls back to an unsigned release APK (see .github/workflows/release.yml).
 val releaseKeystore = System.getenv("ANDROID_KEYSTORE_FILE")?.takeIf { it.isNotBlank() }
 
 android {
