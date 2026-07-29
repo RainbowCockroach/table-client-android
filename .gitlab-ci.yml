@@ -1,0 +1,151 @@
+# Every push to the default branch builds a release APK and publishes it as the one
+# and only GitLab Release. Version = <baseVersionName from gradle.properties>.<pipeline IID>,
+# and versionCode = the pipeline IID, so both move forward on their own.
+#
+# Required CI/CD variables (Settings > CI/CD > Variables):
+#   ANDROID_KEYSTORE_BASE64    `base64 -i release.keystore | tr -d '\n'`, type Variable
+#   ANDROID_KEYSTORE_PASSWORD  masked
+#   ANDROID_KEY_ALIAS
+#   ANDROID_KEY_PASSWORD       masked
+#   GITLAB_API_TOKEN           masked — project access token, Maintainer + `api` scope.
+#                              CI_JOB_TOKEN cannot delete releases, tags or packages.
+# Without the keystore variables the APK still builds, but unsigned and uninstallable.
+
+stages:
+  - build
+  - publish
+  - release
+  - cleanup
+
+variables:
+  ANDROID_IMAGE: "ghcr.io/cirruslabs/android-sdk:36"
+  PACKAGE_NAME: "table-client-android"
+  GRADLE_USER_HOME: "$CI_PROJECT_DIR/.gradle"
+  GRADLE_OPTS: "-Dorg.gradle.daemon=false"
+
+workflow:
+  rules:
+    - if: $CI_PIPELINE_SOURCE == "merge_request_event"
+    - if: $CI_COMMIT_BRANCH
+
+.default-branch-only:
+  rules:
+    - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
+
+build:apk:
+  stage: build
+  extends: .default-branch-only
+  image: $ANDROID_IMAGE
+  interruptible: true
+  cache:
+    key: "gradle-$CI_DEFAULT_BRANCH"
+    paths:
+      - .gradle/caches
+      - .gradle/wrapper
+  script:
+    - chmod +x ./gradlew
+    - |
+      if [ -n "$ANDROID_KEYSTORE_BASE64" ]; then
+        printf '%s' "$ANDROID_KEYSTORE_BASE64" | base64 -d > "$CI_PROJECT_DIR/release.keystore"
+        export ANDROID_KEYSTORE_FILE="$CI_PROJECT_DIR/release.keystore"
+      else
+        echo "WARNING: ANDROID_KEYSTORE_BASE64 is unset — the release APK will be unsigned."
+      fi
+    - ./gradlew assembleRelease
+    - rm -f "$CI_PROJECT_DIR/release.keystore"
+    - VERSION="$(sed -n 's/^baseVersionName=//p' gradle.properties).$CI_PIPELINE_IID"
+    - |
+      # AGP names the output app-release-unsigned.apk when no keystore was supplied.
+      APK="$(ls app/build/outputs/apk/release/*.apk | grep -v -- '-unsigned' | head -n 1 || true)"
+      if [ -z "$APK" ]; then
+        APK="$(ls app/build/outputs/apk/release/*.apk | head -n 1)"
+      fi
+      mkdir -p out
+      cp "$APK" "out/$PACKAGE_NAME-$VERSION.apk"
+    - echo "VERSION=$VERSION" > build.env
+  artifacts:
+    name: "$PACKAGE_NAME-$CI_PIPELINE_IID"
+    paths:
+      - out/
+    expire_in: 1 week
+    reports:
+      dotenv: build.env
+
+publish:package:
+  stage: publish
+  extends: .default-branch-only
+  image: curlimages/curl:latest
+  needs:
+    - job: build:apk
+      artifacts: true
+  script:
+    - |
+      curl --fail --silent --show-error \
+        --header "JOB-TOKEN: $CI_JOB_TOKEN" \
+        --upload-file "out/$PACKAGE_NAME-$VERSION.apk" \
+        "$CI_API_V4_URL/projects/$CI_PROJECT_ID/packages/generic/$PACKAGE_NAME/$VERSION/$PACKAGE_NAME-$VERSION.apk"
+
+create:release:
+  stage: release
+  extends: .default-branch-only
+  image: registry.gitlab.com/gitlab-org/release-cli:latest
+  needs:
+    - job: build:apk
+      artifacts: true
+    - job: publish:package
+  script:
+    - echo "Releasing v$VERSION from $CI_COMMIT_SHORT_SHA"
+  release:
+    tag_name: "v$VERSION"
+    ref: "$CI_COMMIT_SHA"
+    name: "v$VERSION"
+    description: "Automated build of $CI_COMMIT_SHORT_SHA — $CI_COMMIT_TITLE"
+    assets:
+      links:
+        - name: "$PACKAGE_NAME-$VERSION.apk"
+          url: "$CI_API_V4_URL/projects/$CI_PROJECT_ID/packages/generic/$PACKAGE_NAME/$VERSION/$PACKAGE_NAME-$VERSION.apk"
+          link_type: package
+
+# "Only keep the latest release": every release, tag and generic package other than the
+# one this pipeline just made is deleted, so the Releases page always holds exactly one.
+cleanup:old-releases:
+  stage: cleanup
+  extends: .default-branch-only
+  image: alpine:3.22
+  needs:
+    - job: build:apk
+      artifacts: true
+    - job: create:release
+  script:
+    - apk add --no-cache curl jq
+    - |
+      set -eu
+      if [ -z "${GITLAB_API_TOKEN:-}" ]; then
+        echo "GITLAB_API_TOKEN is unset; cannot prune old releases." >&2
+        exit 1
+      fi
+      API="$CI_API_V4_URL/projects/$CI_PROJECT_ID"
+      AUTH="PRIVATE-TOKEN: $GITLAB_API_TOKEN"
+      KEEP="v$VERSION"
+
+      tags="$(curl --fail --silent --show-error --header "$AUTH" \
+        "$API/releases?per_page=100" | jq -r '.[].tag_name')"
+      for tag in $tags; do
+        if [ "$tag" = "$KEEP" ]; then
+          continue
+        fi
+        echo "Deleting release and tag $tag"
+        curl --fail --silent --show-error --request DELETE --header "$AUTH" \
+          "$API/releases/$tag" > /dev/null
+        curl --silent --show-error --request DELETE --header "$AUTH" \
+          "$API/repository/tags/$tag" > /dev/null
+      done
+
+      packages="$(curl --fail --silent --show-error --header "$AUTH" \
+        "$API/packages?package_type=generic&package_name=$PACKAGE_NAME&per_page=100" \
+        | jq -r --arg keep "$VERSION" '.[] | select(.version != $keep) | .id')"
+      for id in $packages; do
+        echo "Deleting package $id"
+        curl --fail --silent --show-error --request DELETE --header "$AUTH" \
+          "$API/packages/$id" > /dev/null
+      done

@@ -5,22 +5,46 @@ plugins {
     alias(libs.plugins.kotlin.serialization)
 }
 
+// CI is the source of the build number: GitLab's pipeline IID increments once per pipeline
+// on the project, so versionCode never goes backwards. Local builds fall back to 1.
+val buildNumber = (System.getenv("CI_PIPELINE_IID")
+    ?: providers.gradleProperty("buildNumber").orNull
+    ?: "1").toInt()
+val baseVersionName = providers.gradleProperty("baseVersionName").get()
+
+// Release signing comes from the environment so the keystore never lives in the repo.
+// Absent it, AGP falls back to an unsigned release APK (see .gitlab-ci.yml).
+val releaseKeystore = System.getenv("ANDROID_KEYSTORE_FILE")?.takeIf { it.isNotBlank() }
+
 android {
     namespace = "com.rainbowcockroach.table.tableandroidclient"
     compileSdk = 36
 
     defaultConfig {
         applicationId = "com.rainbowcockroach.table.tableandroidclient"
-        minSdk = 26
+        // DESIGN §3 publishes downloads to MediaStore.Downloads, which is API 29+.
+        minSdk = 29
         targetSdk = 36
-        versionCode = 1
-        versionName = "1.0"
+        versionCode = buildNumber
+        versionName = "$baseVersionName.$buildNumber"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
 
+    signingConfigs {
+        if (releaseKeystore != null) {
+            create("release") {
+                storeFile = file(releaseKeystore)
+                storePassword = System.getenv("ANDROID_KEYSTORE_PASSWORD")
+                keyAlias = System.getenv("ANDROID_KEY_ALIAS")
+                keyPassword = System.getenv("ANDROID_KEY_PASSWORD")
+            }
+        }
+    }
+
     buildTypes {
         release {
+            signingConfig = signingConfigs.findByName("release")
             isMinifyEnabled = false
             proguardFiles(
                 getDefaultProguardFile("proguard-android-optimize.txt"),
@@ -62,8 +86,13 @@ dependencies {
 
     implementation(libs.okhttp)
     implementation(libs.kotlinx.serialization.json)
+    implementation(libs.kotlinx.coroutines.android)
     implementation(libs.androidx.core.ktx)
+    implementation(libs.androidx.security.crypto)
+    implementation(libs.androidx.datastore.preferences)
     implementation(libs.androidx.lifecycle.runtime.ktx)
+    implementation(libs.androidx.lifecycle.runtime.compose)
+    implementation(libs.androidx.lifecycle.viewmodel.compose)
     implementation(libs.androidx.activity.compose)
     implementation(platform(libs.androidx.compose.bom))
     implementation(libs.androidx.ui)
@@ -72,6 +101,7 @@ dependencies {
     implementation(libs.androidx.material3)
     testImplementation(libs.junit)
     testImplementation(kotlin("test"))
+    testImplementation(libs.kotlinx.coroutines.test)
     androidTestImplementation(libs.androidx.junit)
     androidTestImplementation(libs.androidx.espresso.core)
     androidTestImplementation(platform(libs.androidx.compose.bom))

@@ -35,3 +35,23 @@ TABLE_URL=http://127.0.0.1:8080 TABLE_API_KEY=devkey TABLE_TTL_SECONDS=5 TABLE_T
 Without them the conformance tests skip with a message and the unit tests still run;
 `TABLE_TTL_SECONDS` gates the expiry test alone, and `TABLE_TEST_FAULTS=1` — which the dev
 server needs too — gates the scenario 10 drop tests.
+
+## Releases (`.gitlab-ci.yml`)
+
+Every push to the default branch builds a release APK, publishes it to the generic package
+registry, and creates a GitLab Release for it. The version is derived from the build number
+rather than committed: `versionName` = `baseVersionName` in `gradle.properties` + the pipeline
+IID (`1.0.42`), `versionCode` = the pipeline IID. A final job deletes every other release, its
+tag and its package, so exactly one release exists at a time.
+
+Reproduce a CI version locally with `./gradlew assembleRelease -PbuildNumber=42`.
+
+Set these CI/CD variables before the first run:
+
+| Variable | Notes |
+| --- | --- |
+| `ANDROID_KEYSTORE_BASE64` | `base64 -i release.keystore \| tr -d '\n'`, type Variable (not File). Without it the APK builds unsigned and cannot be installed. |
+| `ANDROID_KEYSTORE_PASSWORD` | masked |
+| `ANDROID_KEY_ALIAS` | |
+| `ANDROID_KEY_PASSWORD` | masked |
+| `GITLAB_API_TOKEN` | Project access token, Maintainer role + `api` scope. `CI_JOB_TOKEN` cannot delete releases, tags or packages, so the cleanup job needs its own. |
