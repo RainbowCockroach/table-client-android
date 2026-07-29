@@ -9,7 +9,10 @@ Kotlin + Jetpack Compose, single module. Design: `DESIGN.md`; plan of record: `P
 app/src/main/kotlin/com/rainbowcockroach/table/tableandroidclient/
   api/        TableClient — typed wrapper over the HTTP API (OkHttp + kotlinx.serialization)
   crypto/     streaming SHA-256
-  transfer/   Downloader and Uploader — the conformance-checklist transfer logic
+  transfer/   Downloader, Uploader, DownloadTask, DownloadQueue — the conformance-checklist
+              transfer logic, plus the MediaStore publish step
+  settings/   host URL and preferences in DataStore, API key in EncryptedSharedPreferences
+  ui/         Compose screens: Main, Settings
 app/src/test/kotlin/…  JVM tests, including the conformance suite
 ```
 
@@ -35,6 +38,20 @@ TABLE_URL=http://127.0.0.1:8080 TABLE_API_KEY=devkey TABLE_TTL_SECONDS=5 TABLE_T
 Without them the conformance tests skip with a message and the unit tests still run;
 `TABLE_TTL_SECONDS` gates the expiry test alone, and `TABLE_TEST_FAULTS=1` — which the dev
 server needs too — gates the scenario 10 drop tests.
+
+## Running the app against a local server
+
+The MediaStore publish and the two screens are verified by hand (DESIGN §7). On an emulator:
+
+```sh
+./gradlew :app:installDebug
+adb reverse tcp:8080 tcp:8080        # so 127.0.0.1:8080 in the app reaches the dev server
+```
+
+Then in Settings enter `http://127.0.0.1:8080`, the API key, and turn on **Allow plain
+http://** — conformance rule 13 refuses the host without it. A dev server started with the
+5 s `TABLE_TTL` above expires files faster than you can tap; use `TABLE_TTL=30m` for a
+manual pass.
 
 ## Releases (`.gitlab-ci.yml`)
 
