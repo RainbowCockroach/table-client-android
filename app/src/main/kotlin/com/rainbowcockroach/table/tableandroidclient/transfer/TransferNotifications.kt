@@ -24,7 +24,7 @@ class TransferNotifications(private val context: Context) {
 
     private val manager = context.getSystemService(NotificationManager::class.java)
 
-    fun progress(notificationId: Int, record: TransferRecord): ForegroundInfo {
+    fun progress(record: TransferRecord): ForegroundInfo {
         ensureChannel(PROGRESS_CHANNEL_ID, "Transfers", NotificationManager.IMPORTANCE_LOW)
         val notification = NotificationCompat.Builder(context, PROGRESS_CHANNEL_ID)
             .setContentTitle(record.name)
@@ -35,7 +35,11 @@ class TransferNotifications(private val context: Context) {
             .setContentIntent(openApp())
             .setProgress(100, percentOf(record), record.state == TransferState.VERIFYING)
             .build()
-        return ForegroundInfo(notificationId, notification, ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC)
+        return ForegroundInfo(
+            progressNotificationId(record.id),
+            notification,
+            ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC,
+        )
     }
 
     /** Only for a settled transfer: a retryable failure is about to run again by itself. */
@@ -75,6 +79,8 @@ class TransferNotifications(private val context: Context) {
         manager.createNotificationChannel(NotificationChannel(id, name, importance))
     }
 }
+
+private fun progressNotificationId(transferId: String) = transferId.hashCode()
 
 /** Distinct from the progress notification, which WorkManager cancels when the work ends. */
 private fun settledNotificationId(transferId: String) = "settled:$transferId".hashCode()

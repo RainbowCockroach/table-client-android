@@ -249,3 +249,27 @@ having on a large upload, which raises it from cosmetic to the main reason to fi
   transfer, queue or UI code changed; a saved host URL that still ends in `/api/v1` will 404 and
   has to be re-entered in Settings. Full JVM suite green against a root-path dev server (14
   `ConformanceTest` cases, 0 skipped).
+
+- **2026-07-30 — main-screen wording and controls (UI only).** "Clear all" on the Transfers
+  header dismisses every settled transfer at once (`MainViewModel.dismissFinished`, which reuses
+  `TransferQueue.dismiss` per record so scheduler cancellation and staged-upload cleanup still
+  happen). Wording follows the table metaphor: "On the server" → "On the table", "Download" →
+  "Take", "Download all" → "Take all" (DESIGN §5 updated). Text actions that have an unambiguous
+  glyph became `IconButton`s — upload (+), settings (cog), retry (refresh), dismiss (×), settings
+  back-arrow — which needed `material-icons-core` on the compile classpath; recent `material3`
+  no longer brings it in transitively. No transfer or protocol code touched; JVM suite green,
+  `assembleDebug` green. Not yet run on a device.
+
+- **2026-07-30 — the ongoing progress notification outlived its transfer.** Reported on a small
+  file that finished almost instantly, and reproducible in both directions. `TransferWorker`
+  posted progress on every record change, including the terminal one, and `progress.cancel()`
+  could abandon a `setForeground` mid-flight. WorkManager takes the notification down from
+  `onExecuted`, straight onto the main thread, while `setForeground` delivers through
+  `startService` and a binder round trip — so a post issued as the worker returned landed after
+  the takedown and stayed in the shade for good. The collector now stops at the settled record
+  (`takeWhile { … && !it.isFinished }`) and each `setForeground` runs under `NonCancellable`, so
+  the last post is always complete before `doWork` returns and WorkManager's takedown is the last
+  word. `TransferNotifications.progress` derives the notification id from the record instead of
+  taking it as an argument (`progressNotificationId`, beside `settledNotificationId`). JVM suite
+  green (transfer cases skipped, no dev server up), `assembleDebug` green. Needs a device check:
+  notification gone on completion, both directions.

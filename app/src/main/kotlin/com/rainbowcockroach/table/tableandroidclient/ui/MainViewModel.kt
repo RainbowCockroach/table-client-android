@@ -80,7 +80,14 @@ class MainViewModel(private val container: AppContainer) : ViewModel() {
 
     fun retry(transferId: String) = viewModelScope.launch { container.transfers.retry(transferId) }
 
-    fun dismiss(transferId: String) = viewModelScope.launch {
+    fun dismiss(transferId: String) = viewModelScope.launch { dismissOne(transferId) }
+
+    /** The whole settled tail at once, so a long queue need not be dismissed row by row. */
+    fun dismissFinished() = viewModelScope.launch {
+        transfers.value.filter { it.isFinished }.forEach { dismissOne(it.id) }
+    }
+
+    private suspend fun dismissOne(transferId: String) {
         container.notifications.cancelSettled(transferId)
         container.transfers.dismiss(transferId)
     }

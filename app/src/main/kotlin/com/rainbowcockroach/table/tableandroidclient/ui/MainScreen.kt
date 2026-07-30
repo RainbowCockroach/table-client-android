@@ -15,9 +15,16 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Add
+import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.Refresh
+import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material3.Button
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.HorizontalDivider
+import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
@@ -30,6 +37,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.produceState
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.Lifecycle
@@ -66,8 +74,8 @@ fun MainScreen(viewModel: MainViewModel, onOpenSettings: () -> Unit) {
             TopAppBar(
                 title = { Text("table") },
                 actions = {
-                    TextButton(onClick = { pickFiles.launch(arrayOf("*/*")) }) { Text("Upload") }
-                    TextButton(onClick = onOpenSettings) { Text("Settings") }
+                    IconAction(Icons.Filled.Add, "Put files on the table") { pickFiles.launch(arrayOf("*/*")) }
+                    IconAction(Icons.Filled.Settings, "Settings", onOpenSettings)
                 },
             )
         },
@@ -92,10 +100,11 @@ fun MainScreen(viewModel: MainViewModel, onOpenSettings: () -> Unit) {
                 verticalArrangement = Arrangement.spacedBy(12.dp),
             ) {
                 item {
-                    ServerHeader(
-                        anyFiles = list.files.isNotEmpty(),
-                        onDownloadAll = viewModel::downloadAll,
-                    )
+                    SectionHeader("On the table") {
+                        if (list.files.isNotEmpty()) {
+                            TextButton(onClick = viewModel::downloadAll) { Text("Take all") }
+                        }
+                    }
                 }
                 if (list.files.isEmpty()) {
                     item { Text(if (list.loaded) "Nothing on the table." else "Loading…") }
@@ -111,7 +120,13 @@ fun MainScreen(viewModel: MainViewModel, onOpenSettings: () -> Unit) {
                 }
                 if (transfers.isNotEmpty()) {
                     item { HorizontalDivider() }
-                    item { SectionHeader("Transfers") }
+                    item {
+                        SectionHeader("Transfers") {
+                            if (transfers.any { it.isFinished }) {
+                                TextButton(onClick = viewModel::dismissFinished) { Text("Clear all") }
+                            }
+                        }
+                    }
                     items(transfers, key = { "transfer-${it.id}" }) { transfer ->
                         TransferRow(
                             transfer = transfer,
@@ -150,18 +165,6 @@ private fun PollWhileResumed(enabled: Boolean, poll: suspend () -> Unit) {
 }
 
 @Composable
-private fun ServerHeader(anyFiles: Boolean, onDownloadAll: () -> Unit) = Row(
-    modifier = Modifier.fillMaxWidth(),
-    verticalAlignment = Alignment.CenterVertically,
-) {
-    SectionHeader("On the server")
-    Spacer(Modifier.weight(1f))
-    if (anyFiles) {
-        TextButton(onClick = onDownloadAll) { Text("Download all") }
-    }
-}
-
-@Composable
 private fun ServerFileRow(
     file: TableFile,
     transfer: TransferRecord?,
@@ -183,7 +186,7 @@ private fun ServerFileRow(
         Spacer(Modifier.width(12.dp))
         val downloading = transfer?.takeIf { it.direction == TransferDirection.DOWNLOAD }
         if (downloading == null || downloading.state == TransferState.FAILED) {
-            Button(onClick = onDownload) { Text("Download") }
+            Button(onClick = onDownload) { Text("Take") }
         } else {
             Text(label(downloading), style = MaterialTheme.typography.bodySmall)
         }
@@ -192,30 +195,37 @@ private fun ServerFileRow(
 
 @Composable
 private fun TransferRow(transfer: TransferRecord, onRetry: () -> Unit, onDismiss: () -> Unit) {
-    Column(Modifier.fillMaxWidth()) {
-        Text(
-            "${arrow(transfer.direction)} ${transfer.name}",
-            style = MaterialTheme.typography.bodyLarge,
-            maxLines = 1,
-            overflow = TextOverflow.Ellipsis,
-        )
-        Text(label(transfer), style = MaterialTheme.typography.bodySmall)
-        if (transfer.state == TransferState.RUNNING || transfer.state == TransferState.VERIFYING) {
-            Progress(transfer.bytesDone, transfer.size)
-        }
-        transfer.failure?.let { failure ->
-            Text(failure.message, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.error)
-        }
-        if (transfer.state == TransferState.FAILED || transfer.state == TransferState.DONE) {
-            Row {
-                if (transfer.state == TransferState.FAILED) {
-                    TextButton(onClick = onRetry) { Text("Retry now") }
-                }
-                TextButton(onClick = onDismiss) { Text("Dismiss") }
+    Row(
+        modifier = Modifier.fillMaxWidth(),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Column(Modifier.weight(1f)) {
+            Text(
+                "${arrow(transfer.direction)} ${transfer.name}",
+                style = MaterialTheme.typography.bodyLarge,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
+            Text(label(transfer), style = MaterialTheme.typography.bodySmall)
+            if (transfer.state == TransferState.RUNNING || transfer.state == TransferState.VERIFYING) {
+                Progress(transfer.bytesDone, transfer.size)
             }
+            transfer.failure?.let { failure ->
+                Text(failure.message, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.error)
+            }
+        }
+        if (transfer.state == TransferState.FAILED) {
+            IconAction(Icons.Filled.Refresh, "Retry now", onRetry)
+        }
+        if (transfer.isFinished) {
+            IconAction(Icons.Filled.Close, "Dismiss", onDismiss)
         }
     }
 }
+
+@Composable
+private fun IconAction(icon: ImageVector, description: String, onClick: () -> Unit) =
+    IconButton(onClick = onClick) { Icon(icon, contentDescription = description) }
 
 @Composable
 private fun Progress(done: Long, total: Long) {
@@ -224,8 +234,14 @@ private fun Progress(done: Long, total: Long) {
 }
 
 @Composable
-private fun SectionHeader(text: String) =
+private fun SectionHeader(text: String, action: @Composable () -> Unit = {}) = Row(
+    modifier = Modifier.fillMaxWidth(),
+    verticalAlignment = Alignment.CenterVertically,
+) {
     Text(text, style = MaterialTheme.typography.titleSmall, color = MaterialTheme.colorScheme.primary)
+    Spacer(Modifier.weight(1f))
+    action()
+}
 
 @Composable
 private fun Banner(message: String) = Text(

@@ -51,7 +51,7 @@ Everything outside `ui/` and `share/` is plain Kotlin with no Android UI depende
 
 Same two-screen shape as every client:
 
-1. **Main** — server file list (poll ~5 s while foregrounded; entries show name, size, expiry countdown, and upload progress for `uploading` files, which are downloadable immediately per the live-relay design) + local transfer queue with per-item progress. "Download all" action.
+1. **Main** — server file list under "On the table" (poll ~5 s while foregrounded; entries show name, size, expiry countdown, and upload progress for `uploading` files, which are downloadable immediately per the live-relay design; the per-file action is "Take") + local transfer queue with per-item progress. "Take all" action on the list, "Clear all" on the queue — it dismisses every settled transfer, the same as dismissing each by hand.
 2. **Settings** — host URL, API key, "test connection" (hits `GET /files`), optional "upload on Wi-Fi only" toggle.
 
 ## 6. Android-specific edge cases
