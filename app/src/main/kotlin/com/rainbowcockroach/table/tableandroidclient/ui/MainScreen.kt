@@ -27,6 +27,7 @@ import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.produceState
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.style.TextOverflow
@@ -41,6 +42,7 @@ import com.rainbowcockroach.table.tableandroidclient.transfer.TransferDirection
 import com.rainbowcockroach.table.tableandroidclient.transfer.TransferRecord
 import com.rainbowcockroach.table.tableandroidclient.transfer.TransferState
 import kotlinx.coroutines.delay
+import java.time.Instant
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -49,6 +51,7 @@ fun MainScreen(viewModel: MainViewModel, onOpenSettings: () -> Unit) {
     val list by viewModel.files.collectAsStateWithLifecycle()
     val transfers by viewModel.transfers.collectAsStateWithLifecycle()
     val intakeMessage by viewModel.intakeMessage.collectAsStateWithLifecycle()
+    val now = tickingClock()
 
     PollWhileResumed(settings?.isConfigured == true) { viewModel.refresh() }
 
@@ -88,7 +91,12 @@ fun MainScreen(viewModel: MainViewModel, onOpenSettings: () -> Unit) {
                 contentPadding = PaddingValues(16.dp),
                 verticalArrangement = Arrangement.spacedBy(12.dp),
             ) {
-                item { SectionHeader("On the server") }
+                item {
+                    ServerHeader(
+                        anyFiles = list.files.isNotEmpty(),
+                        onDownloadAll = viewModel::downloadAll,
+                    )
+                }
                 if (list.files.isEmpty()) {
                     item { Text(if (list.loaded) "Nothing on the table." else "Loading…") }
                 }
@@ -97,6 +105,7 @@ fun MainScreen(viewModel: MainViewModel, onOpenSettings: () -> Unit) {
                     ServerFileRow(
                         file = file,
                         transfer = transfers.firstOrNull { it.remoteId == file.id },
+                        now = now,
                         onDownload = { viewModel.download(file) },
                     )
                 }
@@ -116,6 +125,15 @@ fun MainScreen(viewModel: MainViewModel, onOpenSettings: () -> Unit) {
     }
 }
 
+/** One second is the resolution of the expiry countdowns, and the list has nothing finer. */
+@Composable
+private fun tickingClock(): Instant = produceState(Instant.now()) {
+    while (true) {
+        delay(1_000L)
+        value = Instant.now()
+    }
+}.value
+
 /** DESIGN §5 polls only while the screen is actually in front of the user. */
 @Composable
 private fun PollWhileResumed(enabled: Boolean, poll: suspend () -> Unit) {
@@ -132,14 +150,31 @@ private fun PollWhileResumed(enabled: Boolean, poll: suspend () -> Unit) {
 }
 
 @Composable
-private fun ServerFileRow(file: TableFile, transfer: TransferRecord?, onDownload: () -> Unit) {
+private fun ServerHeader(anyFiles: Boolean, onDownloadAll: () -> Unit) = Row(
+    modifier = Modifier.fillMaxWidth(),
+    verticalAlignment = Alignment.CenterVertically,
+) {
+    SectionHeader("On the server")
+    Spacer(Modifier.weight(1f))
+    if (anyFiles) {
+        TextButton(onClick = onDownloadAll) { Text("Download all") }
+    }
+}
+
+@Composable
+private fun ServerFileRow(
+    file: TableFile,
+    transfer: TransferRecord?,
+    now: Instant,
+    onDownload: () -> Unit,
+) {
     Row(
         modifier = Modifier.fillMaxWidth(),
         verticalAlignment = Alignment.CenterVertically,
     ) {
         Column(Modifier.weight(1f)) {
             Text(file.name, style = MaterialTheme.typography.bodyLarge, maxLines = 1, overflow = TextOverflow.Ellipsis)
-            Text(describe(file), style = MaterialTheme.typography.bodySmall)
+            Text(describe(file, now), style = MaterialTheme.typography.bodySmall)
             // Conformance rule 15: an uploading file shows live progress and downloads anyway.
             if (file.state == FileState.UPLOADING) {
                 Progress(file.bytesReceived, file.size)
@@ -220,9 +255,13 @@ private const val INTAKE_MESSAGE_MILLIS = 6_000L
 private fun arrow(direction: TransferDirection) =
     if (direction == TransferDirection.UPLOAD) "↑" else "↓"
 
-private fun describe(file: TableFile): String = when (file.state) {
+private fun describe(file: TableFile, now: Instant): String = when (file.state) {
+    // Rule 15: no TTL until the upload finalizes, so there is nothing to count down yet.
     FileState.UPLOADING -> "${formatBytes(file.bytesReceived)} of ${formatBytes(file.size)} · uploading"
-    FileState.AVAILABLE -> formatBytes(file.size)
+    FileState.AVAILABLE -> listOfNotNull(
+        formatBytes(file.size),
+        formatExpiry(file.expiresAt, now),
+    ).joinToString(" · ")
 }
 
 private fun label(transfer: TransferRecord): String = when (transfer.state) {

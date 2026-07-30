@@ -16,6 +16,7 @@ import com.rainbowcockroach.table.tableandroidclient.api.AppendResult
 import com.rainbowcockroach.table.tableandroidclient.api.FileState
 import com.rainbowcockroach.table.tableandroidclient.api.TableClient
 import com.rainbowcockroach.table.tableandroidclient.crypto.sha256Hex
+import com.rainbowcockroach.table.tableandroidclient.settings.TableSettings
 import com.rainbowcockroach.table.tableandroidclient.transfer.TransferDirection
 import com.rainbowcockroach.table.tableandroidclient.transfer.TransferRecord
 import com.rainbowcockroach.table.tableandroidclient.transfer.TransferState
@@ -150,7 +151,7 @@ class TransferWorkerTest {
     private val testDriver get() = WorkManagerTestInitHelper.getTestDriver(context)!!
 
     private fun startWork(transferId: String) {
-        scheduler.schedule(transferId)
+        scheduler.schedule(transferId, unmetered = false)
         testDriver.setAllConstraintsMet(workInfo(transferId).id)
     }
 
@@ -202,8 +203,13 @@ class TransferWorkerTest {
     }
 
     private suspend fun useServer(url: String) {
-        container.settings.setHost(url, allowInsecureHttp = true)
-        container.settings.setApiKey(argument("TABLE_API_KEY")!!)
+        container.settings.save(
+            TableSettings(
+                hostUrl = url,
+                apiKey = argument("TABLE_API_KEY")!!,
+                allowInsecureHttp = true,
+            )
+        )
     }
 
     private fun argument(name: String): String? =

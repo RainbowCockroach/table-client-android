@@ -33,7 +33,7 @@ class TransferRunnerTest {
             seen += stateOf(record.id)
             report.bytes(1000)
             seen += stateOf(record.id)
-            TransferResult.Done("one.bin")
+            TransferResult.Done(PublishedDownload("one.bin", "content://downloads/1"))
         }
 
         assertEquals(RunOutcome.DONE, runner.run("one"))

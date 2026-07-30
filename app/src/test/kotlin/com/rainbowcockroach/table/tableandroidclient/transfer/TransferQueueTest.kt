@@ -15,7 +15,7 @@ class TransferQueueTest {
     private val store = InMemoryTransferStore()
     private val scheduler = RecordingScheduler()
     private var nextId = 0
-    private val queue = TransferQueue(store, scheduler, now = { 1_000L }, newId = { "local-${nextId++}" })
+    private val queue = queue()
 
     @Test
     fun `a queued download carries what the worker needs to run it`() = runTest {
@@ -107,6 +107,59 @@ class TransferQueueTest {
         assertEquals(setOf("running", "retrying"), scheduler.scheduled.toSet())
     }
 
+    /** DESIGN §6: the Wi-Fi-only setting is about uploads; a download is never held back. */
+    @Test
+    fun `an upload waits for an unmetered network when the setting asks for it`() = runTest {
+        val onWifi = queue(uploadOnWifiOnly = true)
+        onWifi.upload("content://docs/7", "holiday.jpg", 4096)
+        onWifi.download(file("abc"))
+
+        assertEquals(true, scheduler.unmetered[idOf(TransferDirection.UPLOAD)])
+        assertEquals(false, scheduler.unmetered[idOf(TransferDirection.DOWNLOAD)])
+    }
+
+    @Test
+    fun `turning the setting on re-enqueues the uploads that are still going`() = runTest {
+        val running = upload("running", TransferState.RUNNING)
+        val retrying = upload("retrying", TransferState.FAILED, TransferFailure("dropped", retryable = true))
+        val dead = upload("dead", TransferState.FAILED, TransferFailure("gone", retryable = false))
+        val sent = upload("sent", TransferState.DONE)
+        val downloading = record("downloading", TransferState.RUNNING)
+        listOf(running, retrying, dead, sent, downloading).forEach { store.put(it) }
+
+        queue(uploadOnWifiOnly = true).applyUploadPolicy()
+
+        assertEquals(setOf("running", "retrying"), scheduler.ranNow.toSet())
+        assertEquals(mapOf("running" to true, "retrying" to true), scheduler.unmetered)
+        // Waiting for Wi-Fi is not running: a row still saying RUNNING would claim otherwise.
+        assertEquals(TransferState.QUEUED, store.get("running")!!.state)
+    }
+
+    @Test
+    fun `dismissing an upload drops the copy that was staged for it`() = runTest {
+        val staged = RecordingStagedUploads()
+        val withStaging = queue(staging = staged)
+        withStaging.upload("file:/data/staged/1.upload", "shared.bin", 8)
+        val id = store.all().single().id
+
+        withStaging.dismiss(id)
+
+        assertEquals(listOf("file:/data/staged/1.upload"), staged.discarded)
+    }
+
+    private fun queue(uploadOnWifiOnly: Boolean = false, staging: StagedUploads = StagedUploads.None) =
+        TransferQueue(
+            store = store,
+            scheduler = scheduler,
+            uploadOnWifiOnly = { uploadOnWifiOnly },
+            staging = staging,
+            now = { 1_000L },
+            newId = { "local-${nextId++}" },
+        )
+
+    private suspend fun idOf(direction: TransferDirection) =
+        store.all().single { it.direction == direction }.id
+
     private fun record(id: String, state: TransferState, failure: TransferFailure? = null) = TransferRecord(
         id = id,
         direction = TransferDirection.DOWNLOAD,
@@ -117,6 +170,24 @@ class TransferQueueTest {
         sha256 = HASH,
         failure = failure,
     )
+
+    private fun upload(id: String, state: TransferState, failure: TransferFailure? = null) =
+        record(id, state, failure).copy(
+            direction = TransferDirection.UPLOAD,
+            remoteId = null,
+            sourceUri = "content://docs/$id",
+        )
+}
+
+private class RecordingStagedUploads : StagedUploads {
+
+    val discarded = mutableListOf<String>()
+
+    override fun discard(record: TransferRecord) {
+        record.sourceUri?.let { discarded += it }
+    }
+
+    override fun sweep(live: List<TransferRecord>) = Unit
 }
 
 private const val HASH = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"

@@ -62,7 +62,7 @@ class DownloadTaskTest {
 
         val result = assertIs<TransferResult.Done>(task().run(client, target))
 
-        assertEquals("published.bin", result.publishedName)
+        assertEquals("published.bin", result.published?.name)
         assertContentEquals(source.readBytes(), publisher.file("published.bin").readBytes())
         assertFalse(tempFileFor(target).exists(), "the temp file outlives the ack but not the publish")
         assertTrue(client.listFiles().none { it.id == target.id }, "the acked file is still on the server")
@@ -87,7 +87,7 @@ class DownloadTaskTest {
 
         // Rule 9: the second ack is answered 404, which is success, so the retry still publishes.
         val retried = assertIs<TransferResult.Done>(task().run(client, target))
-        assertEquals("stubborn.bin", retried.publishedName)
+        assertEquals("stubborn.bin", retried.published?.name)
         assertContentEquals(source.readBytes(), publisher.file("stubborn.bin").readBytes())
         assertFalse(kept.exists())
     }
@@ -100,7 +100,7 @@ class DownloadTaskTest {
 
         val result = assertIs<TransferResult.Done>(task().run(client, target))
 
-        assertEquals("twice (1).bin", result.publishedName)
+        assertEquals("twice (1).bin", result.published?.name)
         assertEquals(4, existing.length(), "the file already in Downloads must not be touched")
     }
 
@@ -137,7 +137,7 @@ private class RecordingPublisher(private val directory: File) : DownloadPublishe
 
     fun file(name: String) = File(directory, name)
 
-    override fun publish(source: File, displayName: String): String {
+    override fun publish(source: File, displayName: String): PublishedDownload {
         if (failNextPublish) {
             failNextPublish = false
             throw IOException("simulated publish failure")
@@ -145,6 +145,6 @@ private class RecordingPublisher(private val directory: File) : DownloadPublishe
         val name = uniqueDisplayName(safeDisplayName(displayName)) { file(it).exists() }
         source.copyTo(file(name))
         published += name
-        return name
+        return PublishedDownload(name, file(name).toURI().toString())
     }
 }

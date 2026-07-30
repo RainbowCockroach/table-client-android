@@ -20,6 +20,7 @@ private val Context.preferences: DataStore<Preferences> by preferencesDataStore(
 
 private val HOST_URL = stringPreferencesKey("host_url")
 private val ALLOW_INSECURE_HTTP = booleanPreferencesKey("allow_insecure_http")
+private val UPLOAD_ON_WIFI_ONLY = booleanPreferencesKey("upload_on_wifi_only")
 
 /**
  * DESIGN §4: the API key lives in EncryptedSharedPreferences, everything else in DataStore.
@@ -42,16 +43,22 @@ class SettingsStore(context: Context) {
                     hostUrl = stored[HOST_URL].orEmpty(),
                     apiKey = key,
                     allowInsecureHttp = stored[ALLOW_INSECURE_HTTP] ?: false,
+                    uploadOnWifiOnly = stored[UPLOAD_ON_WIFI_ONLY] ?: false,
                 )
             }
         )
     }
 
-    suspend fun setHost(hostUrl: String, allowInsecureHttp: Boolean) {
-        preferences.edit { it[HOST_URL] = hostUrl.trim(); it[ALLOW_INSECURE_HTTP] = allowInsecureHttp }
+    suspend fun save(settings: TableSettings) {
+        preferences.edit {
+            it[HOST_URL] = settings.hostUrl.trim()
+            it[ALLOW_INSECURE_HTTP] = settings.allowInsecureHttp
+            it[UPLOAD_ON_WIFI_ONLY] = settings.uploadOnWifiOnly
+        }
+        setApiKey(settings.apiKey)
     }
 
-    suspend fun setApiKey(value: String) {
+    private suspend fun setApiKey(value: String) {
         val trimmed = value.trim()
         withContext(Dispatchers.IO) { apiKeys.write(trimmed) }
         apiKey.value = trimmed

@@ -17,7 +17,7 @@ private val DOWNLOADS = MediaStore.Downloads.getContentUri(MediaStore.VOLUME_EXT
 /** Publishes into `Download/` via MediaStore, which needs no storage permission on API 29+. */
 class MediaStoreDownloadPublisher(private val resolver: ContentResolver) : DownloadPublisher {
 
-    override fun publish(source: File, displayName: String): String {
+    override fun publish(source: File, displayName: String): PublishedDownload {
         val uri = resolver.insert(DOWNLOADS, pendingEntry(source, displayName))
             ?: throw IOException("MediaStore refused an entry for $displayName")
         try {
@@ -31,7 +31,7 @@ class MediaStoreDownloadPublisher(private val resolver: ContentResolver) : Downl
             resolver.delete(uri, null, null)
             throw failure
         }
-        return publishedName(uri) ?: displayName
+        return PublishedDownload(publishedName(uri) ?: displayName, uri.toString())
     }
 
     private fun pendingEntry(source: File, displayName: String) = ContentValues().apply {
@@ -67,7 +67,8 @@ class MediaStoreDownloadPublisher(private val resolver: ContentResolver) : Downl
     )?.use { if (it.moveToFirst()) it.getString(0) else null }
 }
 
-private fun mimeTypeOf(displayName: String): String {
+/** Also what the completion notification asks the system to open the file with. */
+internal fun mimeTypeOf(displayName: String): String {
     val extension = displayName.substringAfterLast('.', "").lowercase()
     return MimeTypeMap.getSingleton().getMimeTypeFromExtension(extension) ?: DEFAULT_MIME_TYPE
 }

@@ -13,6 +13,8 @@ import java.util.UUID
 class TransferQueue(
     private val store: TransferStore,
     private val scheduler: TransferScheduler,
+    private val uploadOnWifiOnly: suspend () -> Boolean = { false },
+    private val staging: StagedUploads = StagedUploads.None,
     private val now: () -> Long = System::currentTimeMillis,
     private val newId: () -> String = { UUID.randomUUID().toString() },
 ) {
@@ -51,12 +53,14 @@ class TransferQueue(
         val record = store.update(id) {
             it.copy(state = TransferState.QUEUED, failure = null)
         } ?: return
-        scheduler.runNow(record.id)
+        scheduler.runNow(record.id, unmeteredFor(record))
     }
 
     suspend fun dismiss(id: String) {
         scheduler.cancel(id)
+        val record = store.get(id)
         store.delete(id)
+        record?.let(staging::discard)
     }
 
     /**
@@ -65,13 +69,37 @@ class TransferQueue(
      * disturbing work that survived.
      */
     suspend fun resumeUnfinished() {
-        store.all()
-            .filterNot { it.state == TransferState.DONE || it.failure?.retryable == false }
-            .forEach { scheduler.schedule(it.id) }
+        val live = unsettled()
+        live.forEach { scheduler.schedule(it.id, unmeteredFor(it)) }
+        staging.sweep(live)
     }
+
+    /**
+     * DESIGN §6: the Wi-Fi-only setting is a WorkManager constraint, so uploads already in the
+     * queue obey a change only once they are enqueued again. Each one resumes from the offset
+     * the server reports (rule 2), so re-enqueueing costs a round trip and no bytes.
+     */
+    suspend fun applyUploadPolicy() {
+        val unmetered = uploadOnWifiOnly()
+        unsettled()
+            .filter { it.direction == TransferDirection.UPLOAD }
+            .forEach { record ->
+                // Back to QUEUED first: the replacement work may sit waiting for Wi-Fi, and a
+                // row left saying RUNNING would claim bytes are moving when none are.
+                store.update(record.id) { it.copy(state = TransferState.QUEUED) }
+                scheduler.runNow(record.id, unmetered)
+            }
+    }
+
+    /** Neither finished nor beyond hope — the records a scheduler should still know about. */
+    private suspend fun unsettled(): List<TransferRecord> = store.all()
+        .filterNot { it.state == TransferState.DONE || it.failure?.retryable == false }
+
+    private suspend fun unmeteredFor(record: TransferRecord): Boolean =
+        record.direction == TransferDirection.UPLOAD && uploadOnWifiOnly()
 
     private suspend fun add(record: TransferRecord) {
         store.put(record.copy(createdAt = now()))
-        scheduler.schedule(record.id)
+        scheduler.schedule(record.id, unmeteredFor(record))
     }
 }

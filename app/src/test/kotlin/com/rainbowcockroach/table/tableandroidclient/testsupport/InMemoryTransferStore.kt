@@ -47,12 +47,17 @@ class RecordingScheduler : TransferScheduler {
     val ranNow: MutableList<String> = Collections.synchronizedList(mutableListOf())
     val cancelled: MutableList<String> = Collections.synchronizedList(mutableListOf())
 
-    override fun schedule(id: String) {
+    /** The network constraint each id was last enqueued with. */
+    val unmetered: MutableMap<String, Boolean> = Collections.synchronizedMap(mutableMapOf())
+
+    override fun schedule(id: String, unmetered: Boolean) {
         scheduled += id
+        this.unmetered[id] = unmetered
     }
 
-    override fun runNow(id: String) {
+    override fun runNow(id: String, unmetered: Boolean) {
         ranNow += id
+        this.unmetered[id] = unmetered
     }
 
     override fun cancel(id: String) {

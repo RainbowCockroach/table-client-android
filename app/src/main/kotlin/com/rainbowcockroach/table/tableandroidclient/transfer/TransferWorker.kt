@@ -22,14 +22,18 @@ class TransferWorker(context: Context, parameters: WorkerParameters) :
     override suspend fun doWork(): Result = coroutineScope {
         val transferId = inputData.getString(TRANSFER_ID_KEY) ?: return@coroutineScope Result.failure()
         val progress = launch { showProgressWhileRunning(transferId) }
-        try {
-            when (container.runner.run(transferId, runAttemptCount)) {
-                RunOutcome.DONE -> Result.success()
-                RunOutcome.RETRY -> Result.retry()
-                RunOutcome.GAVE_UP -> Result.failure()
-            }
+        val outcome = try {
+            container.runner.run(transferId, runAttemptCount)
         } finally {
             progress.cancel()
+        }
+        if (outcome != RunOutcome.RETRY) {
+            container.store.get(transferId)?.let(container.notifications::settled)
+        }
+        when (outcome) {
+            RunOutcome.DONE -> Result.success()
+            RunOutcome.RETRY -> Result.retry()
+            RunOutcome.GAVE_UP -> Result.failure()
         }
     }
 

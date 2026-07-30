@@ -178,6 +178,6 @@ private object FileSources : UploadSources {
 }
 
 private object NeverPublishes : DownloadPublisher {
-    override fun publish(source: File, displayName: String): String =
+    override fun publish(source: File, displayName: String): PublishedDownload =
         throw UnsupportedOperationException("this suite only uploads")
 }

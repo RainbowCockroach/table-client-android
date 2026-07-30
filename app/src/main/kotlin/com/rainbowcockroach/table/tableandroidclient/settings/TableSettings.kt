@@ -5,6 +5,8 @@ data class TableSettings(
     val hostUrl: String = "",
     val apiKey: String = "",
     val allowInsecureHttp: Boolean = false,
+    /** DESIGN §6: maps onto WorkManager's `UNMETERED` constraint for upload work. */
+    val uploadOnWifiOnly: Boolean = false,
 ) {
     val isConfigured: Boolean get() = hostUrl.isNotBlank() && apiKey.isNotBlank()
 }

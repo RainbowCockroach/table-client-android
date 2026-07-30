@@ -24,18 +24,21 @@ class WorkTransferScheduler(private val context: Context) : TransferScheduler {
     // Resolved per call: WorkManager may not be initialized when the container is built.
     private val workManager: WorkManager get() = WorkManager.getInstance(context)
 
-    override fun schedule(id: String) = enqueue(id, ExistingWorkPolicy.KEEP)
+    override fun schedule(id: String, unmetered: Boolean) =
+        enqueue(id, ExistingWorkPolicy.KEEP, unmetered)
 
-    override fun runNow(id: String) = enqueue(id, ExistingWorkPolicy.REPLACE)
+    override fun runNow(id: String, unmetered: Boolean) =
+        enqueue(id, ExistingWorkPolicy.REPLACE, unmetered)
 
     override fun cancel(id: String) {
         workManager.cancelUniqueWork(workName(id))
     }
 
-    private fun enqueue(id: String, policy: ExistingWorkPolicy) {
+    private fun enqueue(id: String, policy: ExistingWorkPolicy, unmetered: Boolean) {
+        val network = if (unmetered) NetworkType.UNMETERED else NetworkType.CONNECTED
         val request = OneTimeWorkRequestBuilder<TransferWorker>()
             .setInputData(workDataOf(TRANSFER_ID_KEY to id))
-            .setConstraints(Constraints(requiredNetworkType = NetworkType.CONNECTED))
+            .setConstraints(Constraints(requiredNetworkType = network))
             .setBackoffCriteria(BackoffPolicy.EXPONENTIAL, BACKOFF_SECONDS, TimeUnit.SECONDS)
             .addTag(TRANSFER_WORK_TAG)
             .build()

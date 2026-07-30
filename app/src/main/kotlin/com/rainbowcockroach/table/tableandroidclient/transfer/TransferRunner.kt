@@ -100,7 +100,8 @@ class TransferRunner(
                     state = TransferState.DONE,
                     bytesDone = it.size,
                     failure = null,
-                    publishedName = result.publishedName,
+                    publishedName = result.published?.name,
+                    publishedUri = result.published?.uri,
                 )
             }
             RunOutcome.DONE

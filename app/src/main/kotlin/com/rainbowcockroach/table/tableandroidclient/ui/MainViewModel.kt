@@ -63,14 +63,15 @@ class MainViewModel(private val container: AppContainer) : ViewModel() {
 
     fun download(file: TableFile) = viewModelScope.launch { container.transfers.download(file) }
 
+    /** DESIGN §5's "download all": the queue drops the ones already running (rule 15 included). */
+    fun downloadAll() = viewModelScope.launch {
+        listState.value.files.forEach { container.transfers.download(it) }
+    }
+
     fun upload(uris: List<Uri>) = viewModelScope.launch {
         if (uris.isEmpty()) return@launch
         val intake = withContext(Dispatchers.IO) { container.uploads.accept(uris) }
-        intakeState.value = when {
-            intake.unreadable == 0 -> null
-            intake.queued.isEmpty() -> "Couldn't read what you picked."
-            else -> "Queued ${intake.queued.size}, couldn't read ${intake.unreadable}."
-        }
+        intakeState.value = intakeProblem(intake)
     }
 
     fun dismissIntakeMessage() {
@@ -79,5 +80,8 @@ class MainViewModel(private val container: AppContainer) : ViewModel() {
 
     fun retry(transferId: String) = viewModelScope.launch { container.transfers.retry(transferId) }
 
-    fun dismiss(transferId: String) = viewModelScope.launch { container.transfers.dismiss(transferId) }
+    fun dismiss(transferId: String) = viewModelScope.launch {
+        container.notifications.cancelSettled(transferId)
+        container.transfers.dismiss(transferId)
+    }
 }

@@ -30,6 +30,8 @@ data class TransferRecord(
     val bytesDone: Long = 0L,
     val failure: TransferFailure? = null,
     val publishedName: String? = null,
+    /** Where a published download can be opened, for the completion notification. */
+    val publishedUri: String? = null,
     val createdAt: Long = 0L,
 ) {
     val isFinished: Boolean get() = state == TransferState.DONE || state == TransferState.FAILED
@@ -43,8 +45,8 @@ data class TransferRecord(
 }
 
 sealed interface TransferResult {
-    /** Uploads finalize on the server; downloads carry the name they were published under. */
-    data class Done(val publishedName: String? = null) : TransferResult
+    /** Uploads finalize on the server; downloads carry where they were published. */
+    data class Done(val published: PublishedDownload? = null) : TransferResult
 
     data class Failed(val failure: TransferFailure) : TransferResult
 }

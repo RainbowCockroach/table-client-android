@@ -69,7 +69,8 @@ private fun SettingsForm(
     var hostUrl by remember { mutableStateOf(initial.hostUrl) }
     var apiKey by remember { mutableStateOf(initial.apiKey) }
     var allowInsecureHttp by remember { mutableStateOf(initial.allowInsecureHttp) }
-    val edited = TableSettings(hostUrl, apiKey, allowInsecureHttp)
+    var uploadOnWifiOnly by remember { mutableStateOf(initial.uploadOnWifiOnly) }
+    val edited = TableSettings(hostUrl, apiKey, allowInsecureHttp, uploadOnWifiOnly)
 
     Column(
         modifier = modifier
@@ -94,17 +95,19 @@ private fun SettingsForm(
             visualTransformation = PasswordVisualTransformation(),
             modifier = Modifier.fillMaxWidth(),
         )
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            Column(Modifier.weight(1f)) {
-                Text("Allow plain http://", style = MaterialTheme.typography.bodyLarge)
-                // Conformance rule 13: refused unless the user turns this on deliberately.
-                Text(
-                    "Only for a server you trust on your own network.",
-                    style = MaterialTheme.typography.bodySmall,
-                )
-            }
-            Switch(checked = allowInsecureHttp, onCheckedChange = { allowInsecureHttp = it })
-        }
+        // Conformance rule 13: refused unless the user turns this on deliberately.
+        SettingSwitch(
+            title = "Allow plain http://",
+            explanation = "Only for a server you trust on your own network.",
+            checked = allowInsecureHttp,
+            onCheckedChange = { allowInsecureHttp = it },
+        )
+        SettingSwitch(
+            title = "Upload on Wi-Fi only",
+            explanation = "Queued uploads wait for an unmetered network. Downloads are unaffected.",
+            checked = uploadOnWifiOnly,
+            onCheckedChange = { uploadOnWifiOnly = it },
+        )
         Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
             Button(onClick = { onSave(edited) }, enabled = edited.isConfigured) { Text("Save") }
             OutlinedButton(onClick = { onTest(edited) }, enabled = edited.isConfigured) {
@@ -113,6 +116,20 @@ private fun SettingsForm(
         }
         test?.let { ConnectionTestResult(it) }
     }
+}
+
+@Composable
+private fun SettingSwitch(
+    title: String,
+    explanation: String,
+    checked: Boolean,
+    onCheckedChange: (Boolean) -> Unit,
+) = Row(verticalAlignment = Alignment.CenterVertically) {
+    Column(Modifier.weight(1f)) {
+        Text(title, style = MaterialTheme.typography.bodyLarge)
+        Text(explanation, style = MaterialTheme.typography.bodySmall)
+    }
+    Switch(checked = checked, onCheckedChange = onCheckedChange)
 }
 
 @Composable

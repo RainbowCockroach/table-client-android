@@ -2,4 +2,7 @@
 <resources>
 
     <style name="Theme.TableClient" parent="android:Theme.Material.Light.NoActionBar" />
+
+    <!-- DESIGN §4: the share trampoline shows a toast, never a window. -->
+    <style name="Theme.TableClient.Invisible" parent="android:Theme.Translucent.NoTitleBar" />
 </resources>

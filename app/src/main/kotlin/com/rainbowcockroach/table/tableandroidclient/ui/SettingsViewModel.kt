@@ -28,10 +28,11 @@ class SettingsViewModel(private val container: AppContainer) : ViewModel() {
         .stateIn(viewModelScope, SharingStarted.Eagerly, null)
 
     fun save(settings: TableSettings) {
+        val wifiOnlyChanged = settings.uploadOnWifiOnly != this.settings.value?.uploadOnWifiOnly
         testState.value = null
         viewModelScope.launch {
-            container.settings.setHost(settings.hostUrl, settings.allowInsecureHttp)
-            container.settings.setApiKey(settings.apiKey)
+            container.settings.save(settings)
+            if (wifiOnlyChanged) container.transfers.applyUploadPolicy()
         }
     }
 

@@ -40,9 +40,9 @@ class DownloadTask(private val tempDir: File, private val publisher: DownloadPub
 
     /** Rule 11: the temp file outlives the ack and is dropped only once the copy is published. */
     private fun publish(tempFile: File, target: DownloadTarget): TransferResult {
-        val publishedName = publisher.publish(tempFile, target.name)
+        val published = publisher.publish(tempFile, target.name)
         tempFile.delete()
-        return TransferResult.Done(publishedName)
+        return TransferResult.Done(published)
     }
 
     private fun tempFileFor(fileId: String): File {

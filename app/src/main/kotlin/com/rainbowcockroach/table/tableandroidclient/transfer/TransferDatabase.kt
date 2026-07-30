@@ -10,7 +10,10 @@ import androidx.room.PrimaryKey
 import androidx.room.Query
 import androidx.room.Room
 import androidx.room.RoomDatabase
+import androidx.room.migration.Migration
 import androidx.room.withTransaction
+import androidx.sqlite.SQLiteConnection
+import androidx.sqlite.execSQL
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.map
 
@@ -34,6 +37,7 @@ internal data class TransferEntity(
     val failureMessage: String?,
     val failureRetryable: Boolean,
     val publishedName: String?,
+    val publishedUri: String?,
     val createdAt: Long,
 )
 
@@ -56,14 +60,24 @@ internal interface TransferDao {
     suspend fun delete(id: String)
 }
 
-@Database(entities = [TransferEntity::class], version = 1, exportSchema = false)
+/** Added with the completion notification, which opens the file the download landed in. */
+private val ADD_PUBLISHED_URI = object : Migration(1, 2) {
+    override fun migrate(connection: SQLiteConnection) {
+        connection.execSQL("ALTER TABLE transfers ADD COLUMN publishedUri TEXT")
+    }
+}
+
+@Database(entities = [TransferEntity::class], version = 2, exportSchema = false)
 internal abstract class TransferDatabase : RoomDatabase() {
 
     abstract fun transfers(): TransferDao
 
     companion object {
+        // Migrated rather than rebuilt: an upgrade must not drop transfers still in flight.
         fun open(context: Context): TransferDatabase =
-            Room.databaseBuilder(context, TransferDatabase::class.java, "transfers.db").build()
+            Room.databaseBuilder(context, TransferDatabase::class.java, "transfers.db")
+                .addMigrations(ADD_PUBLISHED_URI)
+                .build()
     }
 }
 
@@ -106,6 +120,7 @@ private fun TransferEntity.toRecord() = TransferRecord(
     bytesDone = bytesDone,
     failure = failureMessage?.let { TransferFailure(it, failureRetryable) },
     publishedName = publishedName,
+    publishedUri = publishedUri,
     createdAt = createdAt,
 )
 
@@ -122,5 +137,6 @@ private fun TransferRecord.toEntity() = TransferEntity(
     failureMessage = failure?.message,
     failureRetryable = failure?.retryable ?: false,
     publishedName = publishedName,
+    publishedUri = publishedUri,
     createdAt = createdAt,
 )

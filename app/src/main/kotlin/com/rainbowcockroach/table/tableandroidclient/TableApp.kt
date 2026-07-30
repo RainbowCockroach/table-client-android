@@ -16,6 +16,7 @@ import com.rainbowcockroach.table.tableandroidclient.transfer.TransferRunner
 import com.rainbowcockroach.table.tableandroidclient.transfer.TransferStore
 import com.rainbowcockroach.table.tableandroidclient.transfer.TransferTasks
 import com.rainbowcockroach.table.tableandroidclient.transfer.UploadIntake
+import com.rainbowcockroach.table.tableandroidclient.transfer.UploadStaging
 import com.rainbowcockroach.table.tableandroidclient.transfer.UploadTask
 import com.rainbowcockroach.table.tableandroidclient.transfer.WorkTransferScheduler
 import kotlinx.coroutines.CoroutineScope
@@ -48,9 +49,16 @@ class AppContainer(context: Context) {
 
     val settings = SettingsStore(appContext)
 
-    val transfers = TransferQueue(store, WorkTransferScheduler(appContext))
+    private val staging = UploadStaging(File(appContext.filesDir, "staged-uploads"))
 
-    val uploads = UploadIntake(appContext.contentResolver, transfers)
+    val transfers = TransferQueue(
+        store = store,
+        scheduler = WorkTransferScheduler(appContext),
+        uploadOnWifiOnly = { settings.settings.first().uploadOnWifiOnly },
+        staging = staging,
+    )
+
+    val uploads = UploadIntake(appContext.contentResolver, transfers, staging)
 
     val notifications = TransferNotifications(appContext)
 

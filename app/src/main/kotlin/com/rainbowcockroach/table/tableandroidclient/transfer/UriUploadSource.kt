@@ -3,6 +3,7 @@ package com.rainbowcockroach.table.tableandroidclient.transfer
 import android.content.ContentResolver
 import android.net.Uri
 import android.provider.OpenableColumns
+import java.io.File
 import java.io.InputStream
 
 /** What a picked or shared URI declares about itself; rule 1 needs the size up front. */
@@ -36,6 +37,7 @@ class ContentUploadSources(private val resolver: ContentResolver) : UploadSource
 
     override fun open(record: TransferRecord): UploadSource {
         val uri = Uri.parse(record.sourceUri ?: throw SourceUnavailableException("no source URI"))
+        if (uri.scheme == ContentResolver.SCHEME_FILE) return stagedCopy(uri, record.name)
         // The size is re-read rather than trusted: it is what the session declares (rule 1),
         // and a provider may hand back a different file than the one that was queued.
         val described = try {
@@ -44,5 +46,12 @@ class ContentUploadSources(private val resolver: ContentResolver) : UploadSource
             throw SourceUnavailableException("no longer allowed to read $uri", denied)
         } ?: throw SourceUnavailableException("$uri is no longer readable")
         return UriUploadSource(resolver, uri, record.name, described.size)
+    }
+
+    /** A staged copy (DESIGN §4) is our own file; only a sweep can have taken it away. */
+    private fun stagedCopy(uri: Uri, name: String): UploadSource {
+        val copy = uri.path?.let(::File)?.takeIf { it.isFile }
+            ?: throw SourceUnavailableException("the copy of $name is gone")
+        return FileUploadSource(copy, name)
     }
 }

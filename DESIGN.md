@@ -37,12 +37,12 @@ Everything outside `ui/` and `share/` is plain Kotlin with no Android UI depende
 - A small **Room/SQLite queue table** carries what WorkManager doesn't: upload session id, file id, temp path, bytes done — the state the worker needs to resume via `HEAD`/`Range` instead of restarting, plus what the UI needs to render the queue.
 - States: `queued → running → verifying → done | failed(retryable) | failed(permanent)`.
 - Concurrency cap: 2 uploads / 2 downloads.
-- Shared and picked `content://` URIs are persisted with `takePersistableUriPermission` so a retry after process death can still read the source.
+- Shared and picked `content://` URIs are persisted with `takePersistableUriPermission` so a retry after process death can still read the source; a grant that cannot be persisted is replaced by a private copy of the file instead (§4). Copies are swept at process start once no unfinished record still names them.
 - Download completion order (conformance rule): temp file in `cacheDir` fully written → verify length + SHA-256 → `FileDescriptor.sync()` → **ack** → publish to `MediaStore.Downloads` (collision-safe naming). Publish failure never loses data — the verified temp file remains and the publish is retried.
 
 ## 4. Android integrations
 
-- **Share sheet**: intent filters for `ACTION_SEND` and `ACTION_SEND_MULTIPLE` (`*/*`). `ShareActivity` is a near-invisible trampoline: persist URI permissions, enqueue work, show a "queued ✓" confirmation, finish.
+- **Share sheet**: intent filters for `ACTION_SEND` and `ACTION_SEND_MULTIPLE` (`*/*`). `ShareActivity` is a near-invisible trampoline: secure the sources, enqueue work, show a "queued ✓" confirmation, finish. *Securing* means `takePersistableUriPermission` where the sender offered a persistable grant (the in-app picker always does), and otherwise a private copy of the bytes taken before the activity finishes — a plain `ACTION_SEND` grant is revoked with the receiving activity, so a queued upload would have nothing left to read on its first retry.
 - **In-app picker**: `ACTION_OPEN_DOCUMENT` with multi-select.
 - **Notifications**: per-transfer progress (from the foreground worker) plus completion/failure; tapping a completed download opens the file via `MediaStore`.
 - Settings live in **EncryptedSharedPreferences** (API key) and plain DataStore (host URL, preferences).
@@ -60,7 +60,7 @@ Same two-screen shape as every client:
 |---|---|
 | Process death / reboot mid-transfer | WorkManager re-runs the worker; queue table has the session id and offsets; resume via `HEAD`/`Range`. |
 | Doze / App Standby delaying transfers | Foreground work largely avoids it while running; queued work may wait. Document the battery-optimization exemption for users who want instant pickup. |
-| `content://` permission revoked before a retry | Permanent failure with a clear "re-share the file" message. |
+| `content://` permission revoked before a retry | Permanent failure with a clear "re-share the file" message. Reachable for a picked file whose grant the user revoked; a shared one was copied at intake (§4). |
 | Source stream can't seek for upload resume | Re-open + `skip(offset)` — correctness identical, cost is a local re-read. |
 | Storage full during download | Retryable failure surfaced in the queue; partial temp file is kept and `Range` resume continues after space is freed. |
 | Network switch (Wi-Fi ↔ cellular) | Socket dies → retryable failure → backoff → resume. The Wi-Fi-only setting maps to WorkManager's `UNMETERED` constraint. |
