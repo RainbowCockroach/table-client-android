@@ -12,7 +12,7 @@ Prerequisite: a working `table-server` (local dev build is enough).
 | C2 | Fault-path tests: resume-not-restart in both directions via `TABLE_TEST_FAULTS` + `X-Test-Drop-After` | fault tests green | staged for review |
 | C3 | Settings screen + main list UI; download end-to-end (temp → verify → fsync → ack → MediaStore) | manual: file from server lands in Downloads, disappears from list | staged for review |
 | C4 | Uploads with resume; WorkManager wiring (queue survives process kill); `androidx.work.testing` smoke test | manual kill-and-resume + smoke test green | staged for review |
-| C5 | Share-sheet intake, notifications, polish (expiry countdowns, download-all, Wi-Fi-only toggle) | manual release pass (DESIGN.md §7) | not started |
+| C5 | Share-sheet intake, notifications, polish (expiry countdowns, download-all, Wi-Fi-only toggle) | manual release pass (DESIGN.md §7) | staged for review |
 | C6 | Release CI (deferred): signed APK attached to `v*` tag releases | — | not started |
 
 Status values: `not started` → `in progress` → `staged for review` → `done` (user committed).
@@ -147,6 +147,52 @@ Status values: `not started` → `in progress` → `staged for review` → `done
   transfer is over. Its second attempt is released with `TestDriver.setAllConstraintsMet`,
   which is also how a real retry is unblocked. (8) The Wi-Fi-only toggle (a `UNMETERED`
   constraint) is C5 per the table, so the only constraint today is `NETWORK_CONNECTED`.
+
+- **2026-07-30 — C5 share sheet, notifications and the polish items staged.** New `share/`
+  (`ShareActivity`, the DESIGN §4 trampoline for `ACTION_SEND`/`ACTION_SEND_MULTIPLE`),
+  `transfer/UploadStaging` (the private copy a non-persistable share grant needs),
+  completion/failure notifications in `TransferNotifications` with tap-to-open via the
+  published MediaStore uri (`DownloadPublisher` now returns `PublishedDownload`; Room
+  migration 1→2 adds `publishedUri`), expiry countdowns and "Download all" on the main
+  screen, and the "Upload on Wi-Fi only" setting wired through `TransferScheduler` as
+  WorkManager's `UNMETERED` constraint. `SettingsStore.setHost`/`setApiKey` collapsed into
+  one `save(TableSettings)`. **74 JVM tests green** (58 + 16): `FormatTest` for the countdown
+  and intake wording, `UploadStagingTest` for the copy, its all-or-nothing failure and the
+  sweep, and three more `TransferQueueTest` cases for constraint routing, `applyUploadPolicy`
+  and staged-copy cleanup on dismiss. **2 instrumented tests still green.**
+  **Manual pass on an API 36 emulator against a dev server, all verified:** rule 13 refusal
+  and its override; two files downloaded via "Download all", both byte-exact in `Download/`,
+  gone from the server, no temp files left; expiry countdowns ticking from `expires_at`;
+  completion notifications for both directions, with a downloaded PNG opening in Photos from
+  its notification and an `application/octet-stream` one falling back to the app; the share
+  sheet showing "Put on the table", queueing with a "Queued 1 for the table ✓" toast and
+  finalizing byte-exact; the staged copies swept at the next app start; and — with Wi-Fi off
+  so the emulator is on metered LTE — an upload held with `Unsatisfied constraints:
+  CONNECTIVITY` against a `NOT_METERED` request, released both by re-enabling Wi-Fi and by
+  turning the setting off.
+  **Reviewer, judgement calls:** (1) **A share grant is not persistable, so the bytes are
+  copied.** `takePersistableUriPermission` fails for a plain `ACTION_SEND` and the grant dies
+  with `ShareActivity`, so an upload queued from the share sheet would fail on its very first
+  retry — verified on the emulator, where every share produced a staged copy. `UploadIntake`
+  therefore takes the copy while it can still read, into `filesDir/staged-uploads`, and the
+  record carries a `file:` URI. DESIGN §3, §4 and §6 were updated to say so before the code
+  went in. The cost is a second copy of a shared file until it settles; picked files
+  (`ACTION_OPEN_DOCUMENT`) still use the persisted grant and are never copied. (2) Copies are
+  swept at process start, keeping only what an unfinished record names, and dropped
+  immediately on dismiss — so a `DONE` row's copy lives until the next launch. (3) The
+  trampoline waits for the intake rather than finishing first, which is the only order in
+  which the grant is still valid; a large shared file therefore shows a blank translucent
+  window for as long as the copy takes. (4) Toggling Wi-Fi-only re-enqueues unfinished uploads
+  (`applyUploadPolicy`) instead of only affecting future ones — otherwise turning it on while
+  on cellular would not stop the upload the user turned it on for. Those rows go back to
+  `QUEUED` first, because work waiting on a constraint is not running. (5) Notifications are
+  posted by `TransferWorker` after the runner returns, not by the runner: the runner is the
+  plain-Kotlin half. A retryable failure gets none — the queue says "Retrying soon". (6) The
+  settled notification uses its own id and channel; WorkManager cancels the foreground
+  progress notification when the work ends and would take the completion one with it.
+  (7) `<queries>` for `ACTION_VIEW` is in the manifest so the notification can tell whether
+  anything can open the file; when nothing can, tapping opens the app instead. (8) The Room
+  schema is migrated rather than rebuilt, so an upgrade cannot drop transfers in flight.
 
 ## Open question for the server (found during C2, not caused by it)
 

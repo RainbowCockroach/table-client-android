@@ -15,6 +15,5 @@ data class PublishedDownload(val name: String, val uri: String? = null)
  * [DownloadTask] keeps the temp file until this returns, so a failure costs a retry, never data.
  */
 interface DownloadPublisher {
-    /** Collision handling may change the name, so the result says where it really went. */
     fun publish(source: File, displayName: String): PublishedDownload
 }

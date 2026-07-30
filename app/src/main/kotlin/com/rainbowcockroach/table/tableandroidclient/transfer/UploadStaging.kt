@@ -18,13 +18,7 @@ interface StagedUploads {
     }
 }
 
-/**
- * Private copies of shared files.
- *
- * A share-sheet grant is rarely persistable and is revoked when the activity that received
- * it finishes, so [stage] takes the bytes while they are still readable — otherwise rule
- * 14's resume after process death would have nothing left to read.
- */
+/** Private copies of upload sources whose `content://` grant will not last (see [UploadIntake]). */
 class UploadStaging(private val directory: File) : StagedUploads {
 
     /** Throws if the copy cannot be completed; nothing is left behind when it does. */

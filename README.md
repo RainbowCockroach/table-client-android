@@ -13,6 +13,7 @@ app/src/main/kotlin/com/rainbowcockroach/table/tableandroidclient/
               the persistent queue (Room) and its WorkManager worker, plus the MediaStore
               publish step
   settings/   host URL and preferences in DataStore, API key in EncryptedSharedPreferences
+  share/      ShareActivity — the share-sheet trampoline
   ui/         Compose screens: Main, Settings
 app/src/test/kotlin/…        JVM tests, including the conformance suite
 app/src/androidTest/kotlin/… the WorkManager smoke test, which needs a device
@@ -71,6 +72,18 @@ enough — `adb reverse` is fast, so a few hundred MB gives about half a minute:
 head -c 300000000 /dev/urandom > big.bin && adb push big.bin /sdcard/Download/
 adb shell am force-stop com.rainbowcockroach.table.tableandroidclient   # mid-transfer
 ```
+
+To exercise the Wi-Fi-only setting, an emulator's Wi-Fi is unmetered but its LTE is not, so
+turning Wi-Fi off is enough to make a queued upload wait:
+
+```sh
+adb shell svc wifi disable    # queue an upload; it stays "Queued"
+adb shell dumpsys jobscheduler | grep -A22 tableandroidclient | grep -m1 'Network type'
+adb shell svc wifi enable     # it runs
+```
+
+The job's network request names `NOT_METERED` while the setting is on. Downloads keep the
+plain connected constraint either way.
 
 WorkManager restarts the worker; the queue row names the upload session and the download's
 partial temp file (`cacheDir/downloads/<file-id>.part`), so both continue where they were.
