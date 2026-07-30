@@ -11,7 +11,7 @@ Prerequisite: a working `table-server` (local dev build is enough).
 | C1 | Core: `api/` + `crypto/` + `transfer/` with JVM conformance-scenario tests against a local server | conformance tests green | staged for review |
 | C2 | Fault-path tests: resume-not-restart in both directions via `TABLE_TEST_FAULTS` + `X-Test-Drop-After` | fault tests green | staged for review |
 | C3 | Settings screen + main list UI; download end-to-end (temp → verify → fsync → ack → MediaStore) | manual: file from server lands in Downloads, disappears from list | staged for review |
-| C4 | Uploads with resume; WorkManager wiring (queue survives process kill); `androidx.work.testing` smoke test | manual kill-and-resume + smoke test green | not started |
+| C4 | Uploads with resume; WorkManager wiring (queue survives process kill); `androidx.work.testing` smoke test | manual kill-and-resume + smoke test green | staged for review |
 | C5 | Share-sheet intake, notifications, polish (expiry countdowns, download-all, Wi-Fi-only toggle) | manual release pass (DESIGN.md §7) | not started |
 | C6 | Release CI (deferred): signed APK attached to `v*` tag releases | — | not started |
 
@@ -99,6 +99,55 @@ Status values: `not started` → `in progress` → `staged for review` → `done
   display name *and* reads back the name MediaStore actually stored — scoped storage hides
   other apps' files from the collision query, and MediaStore uniquifies the rest silently.
 
+- **2026-07-29 — C4 uploads, the persistent queue and WorkManager staged.** The in-memory
+  `DownloadQueue` is gone; in its place `transfer/` has the queue rule 14 asks for — a Room
+  table (`TransferRecord`/`TransferStore`/`RoomTransferStore`), a `TransferQueue` for what the
+  user does to it, a `TransferRunner` that takes one record to a verdict, and `TransferWorker`
+  + `WorkTransferScheduler` (one unique `WorkRequest` per record, `NETWORK_CONNECTED`,
+  exponential backoff, `dataSync` foreground work with a progress notification). The upload
+  half is `UploadTask` over the existing `Uploader`, with `ContentUploadSources`/
+  `UriUploadSource` re-opening a `content://` URI and `UploadIntake` persisting the read grant;
+  the UI gained an Upload action (`ACTION_OPEN_DOCUMENT`, multi-select) and transfer rows for
+  both directions. Build: Room 2.7.2 + KSP, WorkManager 2.10.5, `work-testing` for the
+  instrumented suite. **58 JVM tests green** (43 + 15): `UploadTaskTest` drives the runner
+  against a real server for rules 1, 2 (a `PATCH` dropped at an exact byte resumes from `HEAD`
+  with no new session) and 3 (a rejected finalize clears the session), plus a permanently
+  unreadable source; `TransferQueueTest` and `TransferRunnerTest` cover dedupe, retry, dismiss,
+  resume-on-boot, the state machine, the attempt cap and the concurrency cap. **2 instrumented
+  tests green** (`./gradlew :app:connectedDebugAndroidTest`, DESIGN §7's smoke test): a queued
+  upload runs to a finalized file through WorkManager, and an unreachable server yields
+  `Result.retry` — `ENQUEUED`, `runAttemptCount` 1 — after which the next attempt resumes the
+  same session rather than opening a new one.
+  **Manual pass on an API 36 emulator against a dev server (300 MB file), all verified:** an
+  upload picked from the share-sheet-less picker finalizing with a matching SHA-256; the app
+  killed mid-upload, WorkManager restarting the process and continuing the *same* session
+  (the server's `tmp/<session-id>` kept growing) to a matching finalize; a download killed at
+  263 MB resuming from its partial temp file to 300 MB, verifying, acking (the server's copy
+  disappeared) and publishing as `big (2).bin` with a byte-exact hash; an `uploading` file
+  offering Download (rule 15); and the queue surviving a kill with its rows intact, including
+  the session-expired retry message after an aborted session.
+  **Reviewer, judgement calls:** (1) The store is an interface with a Room implementation so
+  the queue, the runner and their tests stay plain Kotlin under JVM tests (CLAUDE.md's last
+  non-negotiable); enums are stored by name rather than through a `TypeConverter`.
+  (2) A retryable failure is recorded as `FAILED` with `retryable = true`, which is DESIGN §3's
+  `failed(retryable)`; WorkManager owns the retry, the UI says "Retrying soon", and `MAX_ATTEMPTS`
+  (8) converts it to a permanent failure so a hopeless transfer cannot back off forever.
+  (3) `setForeground` is best-effort: Android 12+ refuses a foreground service started from the
+  background, which is exactly where a queue resumed after process death starts (seen in
+  logcat during the manual pass), so the transfer continues as ordinary background work and
+  only the notification is lost. `POST_NOTIFICATIONS` is requested at launch — without it that
+  notification is silently dropped on API 33+; the *completion* notifications are still C5.
+  (4) The 2-per-direction cap is a semaphore in the runner, not a WorkManager feature, so
+  waiting records stay `QUEUED` in the UI. (5) Progress is written to the store at most twice a
+  second, and never after the terminal state, so the flow the UI collects is cheap.
+  (6) An upload source whose provider reports no size is refused ("share or pick it again"):
+  rule 1 needs the size before the session exists, and every picker path supplies it.
+  (7) The instrumented test waits on `WorkInfo` rather than trusting `SynchronousExecutor`: a
+  `CoroutineWorker` runs off WorkManager's executor, so the test executor returns before the
+  transfer is over. Its second attempt is released with `TestDriver.setAllConstraintsMet`,
+  which is also how a real retry is unblocked. (8) The Wi-Fi-only toggle (a `UNMETERED`
+  constraint) is C5 per the table, so the only constraint today is `NETWORK_CONNECTED`.
+
 ## Open question for the server (found during C2, not caused by it)
 
 `scenario 08` (live relay) fails roughly 1 run in 8, on both this checkpoint's code and the
@@ -135,3 +184,13 @@ unaffected — the tail-follow reader reads the file on disk, not the row — so
 mid-upload still works, which C3's manual pass verified. Only the number shown is stale.
 Fixing it belongs in `table-server` (commit the offset periodically inside `commitBytes`), so
 no client-side smoothing was added to hide it.
+
+**C4 update — the same bug costs data, not just a number.** During C4's kill-and-resume pass,
+`HEAD /uploads/{id}` right after the app was killed 167 MB into a 300 MB `PATCH` answered
+`Upload-Offset: 0`, even though `tmp/<session-id>` on the server held all 167 MB. Conformance
+rule 2 says the client resumes from exactly what the server reports, so it dutifully re-sent
+from zero: a mid-`PATCH` interruption currently throws away every uncommitted byte. The client
+side of rule 2 is proven by the fault-injection tests, which pass — the `X-Test-Drop-After`
+middleware commits its `n` bytes *deliberately*, so those resume from the right offset; a real
+dropped connection does not. The periodic `commitOffset` above is what makes resume worth
+having on a large upload, which raises it from cosmetic to the main reason to fix it.

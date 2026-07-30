@@ -9,11 +9,13 @@ Kotlin + Jetpack Compose, single module. Design: `DESIGN.md`; plan of record: `P
 app/src/main/kotlin/com/rainbowcockroach/table/tableandroidclient/
   api/        TableClient — typed wrapper over the HTTP API (OkHttp + kotlinx.serialization)
   crypto/     streaming SHA-256
-  transfer/   Downloader, Uploader, DownloadTask, DownloadQueue — the conformance-checklist
-              transfer logic, plus the MediaStore publish step
+  transfer/   the conformance-checklist transfer logic (Downloader, Uploader and their tasks),
+              the persistent queue (Room) and its WorkManager worker, plus the MediaStore
+              publish step
   settings/   host URL and preferences in DataStore, API key in EncryptedSharedPreferences
   ui/         Compose screens: Main, Settings
-app/src/test/kotlin/…  JVM tests, including the conformance suite
+app/src/test/kotlin/…        JVM tests, including the conformance suite
+app/src/androidTest/kotlin/… the WorkManager smoke test, which needs a device
 ```
 
 Everything outside `ui/` and `share/` is plain Kotlin with no Android UI dependencies, so
@@ -39,6 +41,15 @@ Without them the conformance tests skip with a message and the unit tests still 
 `TABLE_TTL_SECONDS` gates the expiry test alone, and `TABLE_TEST_FAULTS=1` — which the dev
 server needs too — gates the scenario 10 drop tests.
 
+The WorkManager smoke test (DESIGN §7) runs on a device or emulator, which reaches the dev
+server through `adb reverse`; the same two settings are forwarded to it as instrumentation
+arguments, and it skips with a message without them:
+
+```sh
+adb reverse tcp:8080 tcp:8080
+TABLE_URL=http://127.0.0.1:8080 TABLE_API_KEY=devkey ./gradlew :app:connectedDebugAndroidTest
+```
+
 ## Running the app against a local server
 
 The MediaStore publish and the two screens are verified by hand (DESIGN §7). On an emulator:
@@ -52,6 +63,19 @@ Then in Settings enter `http://127.0.0.1:8080`, the API key, and turn on **Allow
 http://** — conformance rule 13 refuses the host without it. A dev server started with the
 5 s `TABLE_TTL` above expires files faster than you can tap; use `TABLE_TTL=30m` for a
 manual pass.
+
+To watch a transfer resume after the process dies, a file big enough to interrupt is
+enough — `adb reverse` is fast, so a few hundred MB gives about half a minute:
+
+```sh
+head -c 300000000 /dev/urandom > big.bin && adb push big.bin /sdcard/Download/
+adb shell am force-stop com.rainbowcockroach.table.tableandroidclient   # mid-transfer
+```
+
+WorkManager restarts the worker; the queue row names the upload session and the download's
+partial temp file (`cacheDir/downloads/<file-id>.part`), so both continue where they were.
+`adb shell run-as com.rainbowcockroach.table.tableandroidclient ls -l cache/downloads` shows
+the partial file growing rather than restarting.
 
 ## Releases (`.github/workflows/release.yml`)
 

@@ -1,5 +1,7 @@
 package com.rainbowcockroach.table.tableandroidclient.ui
 
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
@@ -35,7 +37,8 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.repeatOnLifecycle
 import com.rainbowcockroach.table.tableandroidclient.api.FileState
 import com.rainbowcockroach.table.tableandroidclient.api.TableFile
-import com.rainbowcockroach.table.tableandroidclient.transfer.Transfer
+import com.rainbowcockroach.table.tableandroidclient.transfer.TransferDirection
+import com.rainbowcockroach.table.tableandroidclient.transfer.TransferRecord
 import com.rainbowcockroach.table.tableandroidclient.transfer.TransferState
 import kotlinx.coroutines.delay
 
@@ -45,21 +48,37 @@ fun MainScreen(viewModel: MainViewModel, onOpenSettings: () -> Unit) {
     val settings by viewModel.settings.collectAsStateWithLifecycle()
     val list by viewModel.files.collectAsStateWithLifecycle()
     val transfers by viewModel.transfers.collectAsStateWithLifecycle()
+    val intakeMessage by viewModel.intakeMessage.collectAsStateWithLifecycle()
 
     PollWhileResumed(settings?.isConfigured == true) { viewModel.refresh() }
+
+    // DESIGN §4: multi-select, and the intake persists the grant so a retry can still read it.
+    val pickFiles = rememberLauncherForActivityResult(
+        ActivityResultContracts.OpenMultipleDocuments()
+    ) { uris -> viewModel.upload(uris) }
 
     Scaffold(
         modifier = Modifier.fillMaxSize(),
         topBar = {
             TopAppBar(
                 title = { Text("table") },
-                actions = { TextButton(onClick = onOpenSettings) { Text("Settings") } },
+                actions = {
+                    TextButton(onClick = { pickFiles.launch(arrayOf("*/*")) }) { Text("Upload") }
+                    TextButton(onClick = onOpenSettings) { Text("Settings") }
+                },
             )
         },
     ) { padding ->
         Column(Modifier.padding(padding).fillMaxSize()) {
             val current = settings ?: return@Column
             list.error?.let { Banner(it) }
+            intakeMessage?.let { message ->
+                Banner(message)
+                LaunchedEffect(message) {
+                    delay(INTAKE_MESSAGE_MILLIS)
+                    viewModel.dismissIntakeMessage()
+                }
+            }
             if (!current.isConfigured) {
                 NotConfigured(onOpenSettings)
                 return@Column
@@ -77,7 +96,7 @@ fun MainScreen(viewModel: MainViewModel, onOpenSettings: () -> Unit) {
                 items(list.files, key = { "server-${it.id}" }) { file ->
                     ServerFileRow(
                         file = file,
-                        transfer = transfers.firstOrNull { it.id == file.id },
+                        transfer = transfers.firstOrNull { it.remoteId == file.id },
                         onDownload = { viewModel.download(file) },
                     )
                 }
@@ -113,7 +132,7 @@ private fun PollWhileResumed(enabled: Boolean, poll: suspend () -> Unit) {
 }
 
 @Composable
-private fun ServerFileRow(file: TableFile, transfer: Transfer?, onDownload: () -> Unit) {
+private fun ServerFileRow(file: TableFile, transfer: TransferRecord?, onDownload: () -> Unit) {
     Row(
         modifier = Modifier.fillMaxWidth(),
         verticalAlignment = Alignment.CenterVertically,
@@ -127,31 +146,38 @@ private fun ServerFileRow(file: TableFile, transfer: Transfer?, onDownload: () -
             }
         }
         Spacer(Modifier.width(12.dp))
-        if (transfer == null || transfer.state == TransferState.FAILED) {
+        val downloading = transfer?.takeIf { it.direction == TransferDirection.DOWNLOAD }
+        if (downloading == null || downloading.state == TransferState.FAILED) {
             Button(onClick = onDownload) { Text("Download") }
         } else {
-            Text(label(transfer), style = MaterialTheme.typography.bodySmall)
+            Text(label(downloading), style = MaterialTheme.typography.bodySmall)
         }
     }
 }
 
 @Composable
-private fun TransferRow(transfer: Transfer, onRetry: () -> Unit, onDismiss: () -> Unit) {
+private fun TransferRow(transfer: TransferRecord, onRetry: () -> Unit, onDismiss: () -> Unit) {
     Column(Modifier.fillMaxWidth()) {
-        Text(transfer.name, style = MaterialTheme.typography.bodyLarge, maxLines = 1, overflow = TextOverflow.Ellipsis)
+        Text(
+            "${arrow(transfer.direction)} ${transfer.name}",
+            style = MaterialTheme.typography.bodyLarge,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+        )
         Text(label(transfer), style = MaterialTheme.typography.bodySmall)
         if (transfer.state == TransferState.RUNNING || transfer.state == TransferState.VERIFYING) {
             Progress(transfer.bytesDone, transfer.size)
         }
         transfer.failure?.let { failure ->
             Text(failure.message, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.error)
+        }
+        if (transfer.state == TransferState.FAILED || transfer.state == TransferState.DONE) {
             Row {
-                if (failure.retryable) TextButton(onClick = onRetry) { Text("Retry") }
+                if (transfer.state == TransferState.FAILED) {
+                    TextButton(onClick = onRetry) { Text("Retry now") }
+                }
                 TextButton(onClick = onDismiss) { Text("Dismiss") }
             }
-        }
-        if (transfer.state == TransferState.DONE) {
-            TextButton(onClick = onDismiss) { Text("Dismiss") }
         }
     }
 }
@@ -189,15 +215,23 @@ private fun NotConfigured(onOpenSettings: () -> Unit) = Column(
     Button(onClick = onOpenSettings) { Text("Open settings") }
 }
 
+private const val INTAKE_MESSAGE_MILLIS = 6_000L
+
+private fun arrow(direction: TransferDirection) =
+    if (direction == TransferDirection.UPLOAD) "↑" else "↓"
+
 private fun describe(file: TableFile): String = when (file.state) {
     FileState.UPLOADING -> "${formatBytes(file.bytesReceived)} of ${formatBytes(file.size)} · uploading"
     FileState.AVAILABLE -> formatBytes(file.size)
 }
 
-private fun label(transfer: Transfer): String = when (transfer.state) {
+private fun label(transfer: TransferRecord): String = when (transfer.state) {
     TransferState.QUEUED -> "Queued"
     TransferState.RUNNING -> "${formatBytes(transfer.bytesDone)} of ${formatBytes(transfer.size)}"
-    TransferState.VERIFYING -> "Verifying"
-    TransferState.DONE -> "Saved to Downloads as ${transfer.publishedName}"
-    TransferState.FAILED -> "Failed"
+    TransferState.VERIFYING ->
+        if (transfer.direction == TransferDirection.UPLOAD) "Finishing" else "Verifying"
+
+    TransferState.DONE -> transfer.publishedName?.let { "Saved to Downloads as $it" } ?: "Sent"
+    // WorkManager owns the retry; the button is only for someone who would rather not wait.
+    TransferState.FAILED -> if (transfer.failure?.retryable == true) "Retrying soon" else "Failed"
 }

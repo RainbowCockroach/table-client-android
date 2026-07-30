@@ -3,6 +3,7 @@ plugins {
     alias(libs.plugins.kotlin.android)
     alias(libs.plugins.kotlin.compose)
     alias(libs.plugins.kotlin.serialization)
+    alias(libs.plugins.ksp)
 }
 
 // CI is the source of the build number: GITHUB_RUN_NUMBER increments once per run of the
@@ -16,6 +17,11 @@ val baseVersionName = providers.gradleProperty("baseVersionName").get()
 // Absent it, AGP falls back to an unsigned release APK (see .github/workflows/release.yml).
 val releaseKeystore = System.getenv("ANDROID_KEYSTORE_FILE")?.takeIf { it.isNotBlank() }
 
+val serverSettingNames = listOf("TABLE_URL", "TABLE_API_KEY", "TABLE_TTL_SECONDS", "TABLE_TEST_FAULTS")
+
+fun serverSetting(name: String): String? =
+    providers.environmentVariable(name).orNull ?: providers.gradleProperty(name).orNull
+
 android {
     namespace = "com.rainbowcockroach.table.tableandroidclient"
     compileSdk = 36
@@ -27,6 +33,13 @@ android {
         targetSdk = 36
         versionCode = buildNumber
         versionName = "$baseVersionName.$buildNumber"
+        testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
+        // The instrumented smoke test reaches the dev server through `adb reverse`, so it gets
+        // the same settings the JVM suite does — as runner arguments, the only channel a test
+        // on a device can read them from.
+        testInstrumentationRunnerArguments.putAll(
+            serverSettingNames.mapNotNull { name -> serverSetting(name)?.let { name to it } }.toMap()
+        )
     }
 
     signingConfigs {
@@ -65,9 +78,8 @@ android {
 // The conformance suite in src/test talks to a real table-server; DESIGN §7 takes
 // its address from the environment or a Gradle property and skips without one.
 tasks.withType<Test>().configureEach {
-    for (name in listOf("TABLE_URL", "TABLE_API_KEY", "TABLE_TTL_SECONDS", "TABLE_TEST_FAULTS")) {
-        val value = providers.environmentVariable(name).orNull
-            ?: providers.gradleProperty(name).orNull
+    for (name in serverSettingNames) {
+        val value = serverSetting(name)
         if (value != null) systemProperty(name, value)
     }
     // The server is an input Gradle cannot fingerprint, so a green run must never
@@ -88,6 +100,10 @@ dependencies {
     implementation(libs.androidx.core.ktx)
     implementation(libs.androidx.security.crypto)
     implementation(libs.androidx.datastore.preferences)
+    implementation(libs.androidx.room.runtime)
+    implementation(libs.androidx.room.ktx)
+    ksp(libs.androidx.room.compiler)
+    implementation(libs.androidx.work.runtime.ktx)
     implementation(libs.androidx.lifecycle.runtime.ktx)
     implementation(libs.androidx.lifecycle.runtime.compose)
     implementation(libs.androidx.lifecycle.viewmodel.compose)
@@ -100,5 +116,10 @@ dependencies {
     testImplementation(libs.junit)
     testImplementation(kotlin("test"))
     testImplementation(libs.kotlinx.coroutines.test)
+    androidTestImplementation(libs.junit)
+    androidTestImplementation(kotlin("test"))
+    androidTestImplementation(libs.androidx.junit)
+    androidTestImplementation(libs.androidx.test.runner)
+    androidTestImplementation(libs.androidx.work.testing)
     debugImplementation(libs.androidx.ui.tooling)
 }

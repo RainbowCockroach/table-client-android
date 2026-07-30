@@ -1,11 +1,12 @@
 package com.rainbowcockroach.table.tableandroidclient.ui
 
+import android.net.Uri
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.rainbowcockroach.table.tableandroidclient.AppContainer
 import com.rainbowcockroach.table.tableandroidclient.api.TableFile
 import com.rainbowcockroach.table.tableandroidclient.settings.TableSettings
-import com.rainbowcockroach.table.tableandroidclient.transfer.DownloadTarget
+import com.rainbowcockroach.table.tableandroidclient.transfer.TransferRecord
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
@@ -13,6 +14,7 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.flow.update
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
 /** DESIGN §5: the list refreshes on this cadence while the screen is in the foreground. */
@@ -29,7 +31,13 @@ class MainViewModel(private val container: AppContainer) : ViewModel() {
     private val listState = MutableStateFlow(FileListState())
     val files: StateFlow<FileListState> = listState.asStateFlow()
 
-    val transfers = container.downloads.transfers
+    private val intakeState = MutableStateFlow<String?>(null)
+
+    /** What the picker itself never says: which of the picked files could not be read. */
+    val intakeMessage: StateFlow<String?> = intakeState.asStateFlow()
+
+    val transfers: StateFlow<List<TransferRecord>> = container.transfers.transfers
+        .stateIn(viewModelScope, SharingStarted.Eagerly, emptyList())
 
     /** Null until the stored settings are in — "no server yet" must not flash before then. */
     val settings: StateFlow<TableSettings?> = container.settings.settings
@@ -53,9 +61,23 @@ class MainViewModel(private val container: AppContainer) : ViewModel() {
         }
     }
 
-    fun download(file: TableFile) = container.downloads.enqueue(DownloadTarget(file))
+    fun download(file: TableFile) = viewModelScope.launch { container.transfers.download(file) }
 
-    fun retry(transferId: String) = container.downloads.retry(transferId)
+    fun upload(uris: List<Uri>) = viewModelScope.launch {
+        if (uris.isEmpty()) return@launch
+        val intake = withContext(Dispatchers.IO) { container.uploads.accept(uris) }
+        intakeState.value = when {
+            intake.unreadable == 0 -> null
+            intake.queued.isEmpty() -> "Couldn't read what you picked."
+            else -> "Queued ${intake.queued.size}, couldn't read ${intake.unreadable}."
+        }
+    }
 
-    fun dismiss(transferId: String) = container.downloads.forget(transferId)
+    fun dismissIntakeMessage() {
+        intakeState.value = null
+    }
+
+    fun retry(transferId: String) = viewModelScope.launch { container.transfers.retry(transferId) }
+
+    fun dismiss(transferId: String) = viewModelScope.launch { container.transfers.dismiss(transferId) }
 }

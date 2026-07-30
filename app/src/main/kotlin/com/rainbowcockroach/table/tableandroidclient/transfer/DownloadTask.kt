@@ -4,13 +4,6 @@ import com.rainbowcockroach.table.tableandroidclient.api.TableClient
 import com.rainbowcockroach.table.tableandroidclient.api.isRetryable
 import java.io.File
 
-sealed interface DownloadResult {
-    /** Verified, acked, and visible to the user under [publishedName]. */
-    data class Published(val publishedName: String) : DownloadResult
-
-    data class Failed(val failure: TransferFailure) : DownloadResult
-}
-
 /**
  * The whole of conformance rule 11 for one file: temp file → verify → fsync → ack → publish.
  *
@@ -24,7 +17,7 @@ class DownloadTask(private val tempDir: File, private val publisher: DownloadPub
         client: TableClient,
         target: DownloadTarget,
         onProgress: (bytesOnDisk: Long) -> Unit = {},
-    ): DownloadResult {
+    ): TransferResult {
         val tempFile = tempFileFor(target.id)
         return try {
             when (val outcome = Downloader(client).download(target, tempFile, onProgress)) {
@@ -36,22 +29,20 @@ class DownloadTask(private val tempDir: File, private val publisher: DownloadPub
 
                 is DownloadOutcome.Corrupt -> retryable("${outcome.reason} — downloading again")
 
-                DownloadOutcome.Gone -> DownloadResult.Failed(
-                    TransferFailure("no longer on the server", retryable = false)
-                )
+                DownloadOutcome.Gone -> permanent("no longer on the server")
             }
         } catch (failure: Exception) {
-            DownloadResult.Failed(
+            TransferResult.Failed(
                 TransferFailure(failure.message ?: failure.toString(), failure.isRetryable)
             )
         }
     }
 
     /** Rule 11: the temp file outlives the ack and is dropped only once the copy is published. */
-    private fun publish(tempFile: File, target: DownloadTarget): DownloadResult {
+    private fun publish(tempFile: File, target: DownloadTarget): TransferResult {
         val publishedName = publisher.publish(tempFile, target.name)
         tempFile.delete()
-        return DownloadResult.Published(publishedName)
+        return TransferResult.Done(publishedName)
     }
 
     private fun tempFileFor(fileId: String): File {
@@ -60,5 +51,3 @@ class DownloadTask(private val tempDir: File, private val publisher: DownloadPub
         return File(tempDir, "$fileId.part")
     }
 }
-
-private fun retryable(message: String) = DownloadResult.Failed(TransferFailure(message, retryable = true))

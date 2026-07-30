@@ -60,7 +60,7 @@ class DownloadTaskTest {
         val source = randomFile(scratch.root, "published.bin", 512 * 1024)
         val target = upload(source)
 
-        val result = assertIs<DownloadResult.Published>(task().run(client, target))
+        val result = assertIs<TransferResult.Done>(task().run(client, target))
 
         assertEquals("published.bin", result.publishedName)
         assertContentEquals(source.readBytes(), publisher.file("published.bin").readBytes())
@@ -78,7 +78,7 @@ class DownloadTaskTest {
         val target = upload(source)
 
         publisher.failNextPublish = true
-        val failed = assertIs<DownloadResult.Failed>(task().run(client, target))
+        val failed = assertIs<TransferResult.Failed>(task().run(client, target))
         assertTrue(failed.failure.retryable)
 
         val kept = tempFileFor(target)
@@ -86,7 +86,7 @@ class DownloadTaskTest {
         assertTrue(client.listFiles().none { it.id == target.id }, "the ack already happened")
 
         // Rule 9: the second ack is answered 404, which is success, so the retry still publishes.
-        val retried = assertIs<DownloadResult.Published>(task().run(client, target))
+        val retried = assertIs<TransferResult.Done>(task().run(client, target))
         assertEquals("stubborn.bin", retried.publishedName)
         assertContentEquals(source.readBytes(), publisher.file("stubborn.bin").readBytes())
         assertFalse(kept.exists())
@@ -98,7 +98,7 @@ class DownloadTaskTest {
         val source = randomFile(scratch.root, "twice.bin", 64 * 1024)
         val target = upload(source)
 
-        val result = assertIs<DownloadResult.Published>(task().run(client, target))
+        val result = assertIs<TransferResult.Done>(task().run(client, target))
 
         assertEquals("twice (1).bin", result.publishedName)
         assertEquals(4, existing.length(), "the file already in Downloads must not be touched")
@@ -110,7 +110,7 @@ class DownloadTaskTest {
         val target = upload(source)
         client.deleteFile(target.id)
 
-        val failed = assertIs<DownloadResult.Failed>(task().run(client, target))
+        val failed = assertIs<TransferResult.Failed>(task().run(client, target))
 
         assertFalse(failed.failure.retryable, "re-requesting a deleted file will never work")
         assertTrue(publisher.published.isEmpty())

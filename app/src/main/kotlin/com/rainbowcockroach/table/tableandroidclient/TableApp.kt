@@ -6,43 +6,69 @@ import com.rainbowcockroach.table.tableandroidclient.api.TableClient
 import com.rainbowcockroach.table.tableandroidclient.api.defaultHttpClient
 import com.rainbowcockroach.table.tableandroidclient.settings.SettingsStore
 import com.rainbowcockroach.table.tableandroidclient.settings.TableSettings
-import com.rainbowcockroach.table.tableandroidclient.transfer.DownloadQueue
+import com.rainbowcockroach.table.tableandroidclient.transfer.ContentUploadSources
 import com.rainbowcockroach.table.tableandroidclient.transfer.DownloadTask
 import com.rainbowcockroach.table.tableandroidclient.transfer.MediaStoreDownloadPublisher
+import com.rainbowcockroach.table.tableandroidclient.transfer.RoomTransferStore
+import com.rainbowcockroach.table.tableandroidclient.transfer.TransferNotifications
+import com.rainbowcockroach.table.tableandroidclient.transfer.TransferQueue
+import com.rainbowcockroach.table.tableandroidclient.transfer.TransferRunner
+import com.rainbowcockroach.table.tableandroidclient.transfer.TransferStore
+import com.rainbowcockroach.table.tableandroidclient.transfer.TransferTasks
+import com.rainbowcockroach.table.tableandroidclient.transfer.UploadIntake
+import com.rainbowcockroach.table.tableandroidclient.transfer.UploadTask
+import com.rainbowcockroach.table.tableandroidclient.transfer.WorkTransferScheduler
 import kotlinx.coroutines.CoroutineScope
-import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.flow.first
-import kotlinx.coroutines.withContext
+import kotlinx.coroutines.launch
 import java.io.File
 
 class TableApp : Application() {
+
     val container: AppContainer by lazy { AppContainer(this) }
+
+    override fun onCreate() {
+        super.onCreate()
+        // Rule 14: whatever the last process left unfinished goes back to WorkManager here.
+        container.resumeTransfers()
+    }
 }
 
 /**
- * The single graph of long-lived objects. It outlives the Activity so a download survives
- * rotation; surviving process death is WorkManager's job, from C4 on.
+ * The single graph of long-lived objects, shared by the UI and by the transfer worker —
+ * which is why it hangs off the Application rather than an Activity.
  */
 class AppContainer(context: Context) {
 
+    private val appContext = context.applicationContext
     private val scope = CoroutineScope(SupervisorJob())
     private val http = defaultHttpClient()
+    val store: TransferStore = RoomTransferStore(appContext)
 
-    val settings = SettingsStore(context)
+    val settings = SettingsStore(appContext)
 
-    private val downloadTask = DownloadTask(
-        tempDir = File(context.cacheDir, "downloads"),
-        publisher = MediaStoreDownloadPublisher(context.contentResolver),
-    )
+    val transfers = TransferQueue(store, WorkTransferScheduler(appContext))
 
-    val downloads = DownloadQueue(
-        scope = scope,
+    val uploads = UploadIntake(appContext.contentResolver, transfers)
+
+    val notifications = TransferNotifications(appContext)
+
+    val runner = TransferRunner(
+        store = store,
         clientFor = ::currentClientOrNull,
-        download = { client, target, onProgress ->
-            withContext(Dispatchers.IO) { downloadTask.run(client, target, onProgress) }
-        },
+        attempt = TransferTasks(
+            downloads = DownloadTask(
+                tempDir = File(appContext.cacheDir, "downloads"),
+                publisher = MediaStoreDownloadPublisher(appContext.contentResolver),
+            ),
+            uploads = UploadTask(ContentUploadSources(appContext.contentResolver)),
+        ),
     )
+
+    fun resumeTransfers() {
+        scope.launch { transfers.resumeUnfinished() }
+    }
 
     /** Shares one connection pool across every client; rule 13 is enforced by the constructor. */
     fun clientFor(settings: TableSettings): TableClient =
