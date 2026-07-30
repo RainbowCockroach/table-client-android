@@ -240,3 +240,12 @@ side of rule 2 is proven by the fault-injection tests, which pass — the `X-Tes
 middleware commits its `n` bytes *deliberately*, so those resume from the right offset; a real
 dropped connection does not. The periodic `commitOffset` above is what makes resume worth
 having on a large upload, which raises it from cosmetic to the main reason to fix it.
+
+- **2026-07-30 — API prefix dropped (server contract change, tracked here).** The server now
+  serves `/files` and `/uploads` at the host root, so `api/TableClient.kt` loses `API_PREFIX`:
+  `parseHostUrl` validates the scheme and trims a trailing slash, and the host URL it returns is
+  the base for every request — it no longer appends the prefix or strips a pasted copy of it. The
+  host test that checked the prefix was not doubled now checks trailing-slash tolerance. No
+  transfer, queue or UI code changed; a saved host URL that still ends in `/api/v1` will 404 and
+  has to be re-entered in Settings. Full JVM suite green against a root-path dev server (14
+  `ConformanceTest` cases, 0 skipped).

@@ -14,9 +14,6 @@ import okhttp3.Response
 import java.io.InputStream
 import java.time.Duration
 
-/** The fixed API prefix from openapi.yaml; a host URL never carries it. */
-private const val API_PREFIX = "api/v1"
-
 /**
  * No new bytes for this long fails the request. DESIGN §2: transfers get no overall
  * call timeout — a multi-GB file must not race a stopwatch — so socket inactivity is
@@ -185,13 +182,12 @@ private class BearerAuthInterceptor(apiKey: String) : Interceptor {
 
 /** Conformance rule 13: plain `http://` is refused unless the user explicitly overrode it. */
 private fun parseHostUrl(hostUrl: String, allowInsecureHttp: Boolean): HttpUrl {
-    val host = hostUrl.trim().trimEnd('/').removeSuffix("/$API_PREFIX")
-    val parsed = host.toHttpUrlOrNull()
+    val parsed = hostUrl.trim().trimEnd('/').toHttpUrlOrNull()
         ?: throw IllegalArgumentException("not a valid http(s) URL: $hostUrl")
     require(parsed.isHttps || allowInsecureHttp) {
         "refusing plain http:// host $hostUrl — enable the insecure-host override to use it"
     }
-    return parsed.newBuilder().addPathSegments(API_PREFIX).build()
+    return parsed
 }
 
 private fun Response.uploadOffsetHeader(): Long? = header("Upload-Offset")?.toLongOrNull()

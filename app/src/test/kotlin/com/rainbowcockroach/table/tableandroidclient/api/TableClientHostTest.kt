@@ -22,8 +22,8 @@ class TableClientHostTest {
     }
 
     @Test
-    fun `a host that already names the api prefix is not doubled`() {
-        TableClient("https://files.example.com/api/v1/", "key")
+    fun `a trailing slash on the host is tolerated`() {
+        TableClient("https://files.example.com/", "key")
     }
 
     @Test
