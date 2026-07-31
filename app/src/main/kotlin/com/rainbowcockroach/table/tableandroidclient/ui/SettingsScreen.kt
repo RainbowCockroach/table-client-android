@@ -10,6 +10,8 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.filled.Visibility
+import androidx.compose.material.icons.filled.VisibilityOff
 import androidx.compose.material3.Button
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
@@ -29,6 +31,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.input.PasswordVisualTransformation
+import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.rainbowcockroach.table.tableandroidclient.settings.TableSettings
@@ -75,6 +78,7 @@ private fun SettingsForm(
 ) {
     var hostUrl by remember { mutableStateOf(initial.hostUrl) }
     var apiKey by remember { mutableStateOf(initial.apiKey) }
+    var apiKeyVisible by remember { mutableStateOf(false) }
     var allowInsecureHttp by remember { mutableStateOf(initial.allowInsecureHttp) }
     var uploadOnWifiOnly by remember { mutableStateOf(initial.uploadOnWifiOnly) }
     val edited = TableSettings(hostUrl, apiKey, allowInsecureHttp, uploadOnWifiOnly)
@@ -99,7 +103,18 @@ private fun SettingsForm(
             onValueChange = { apiKey = it },
             label = { Text("API key") },
             singleLine = true,
-            visualTransformation = PasswordVisualTransformation(),
+            visualTransformation =
+                if (apiKeyVisible) VisualTransformation.None else PasswordVisualTransformation(),
+            trailingIcon = {
+                IconButton(onClick = { apiKeyVisible = !apiKeyVisible }) {
+                    Icon(
+                        imageVector =
+                            if (apiKeyVisible) Icons.Filled.VisibilityOff
+                            else Icons.Filled.Visibility,
+                        contentDescription = if (apiKeyVisible) "Hide API key" else "View API key",
+                    )
+                }
+            },
             modifier = Modifier.fillMaxWidth(),
         )
         // Conformance rule 13: refused unless the user turns this on deliberately.
