@@ -324,6 +324,36 @@ having on a large upload, which raises it from cosmetic to the main reason to fi
   (4) Whether the exemption also lets a background `setForeground` succeed is Android's
   documented behaviour but unverified here; the device check below is what would settle it.
 
+- **2026-07-31 — "Check for update" in Settings.** The APK is side-loaded from GitHub Releases,
+  so nothing on the device knows a newer build exists. New `update/UpdateChecker.kt`: an
+  unauthenticated `GET /repos/RainbowCockroach/table-client-android/releases/latest`, a
+  `compareVersions` that ranks the release tag against the installed `versionName`
+  component-wise (leading `v` optional, a missing component counts as zero, an unrankable tag is
+  a failed check rather than an update), and an `UpdateStatus` of
+  `Checking | UpToDate | Available | Failed`. `AppContainer` builds it with the installed
+  `versionName` from `PackageManager` and the shared OkHttp client, re-bounded with a 15 s
+  `callTimeout` — the transfer client deliberately has none, and a button press must not hang
+  forever. `SettingsScreen` gained a version row with the button; `Available` opens an
+  `AlertDialog` whose Download button hands `RELEASES_PAGE_URL` to a browser via `ACTION_VIEW`,
+  and a device with nothing to take the URL turns the prompt into a `Failed` line instead of
+  dismissing silently. DESIGN §1/§4/§5/§7 and `README.md` were updated before the code went in.
+  **79 JVM tests** (55 passed, 24 skipped with no dev server up), `assembleDebug` and
+  `assembleRelease` green.
+  **Verified on the API 36 emulator against the live GitHub API**, all three answers: installed
+  `1.0.1` → "Update available / Version 1.0.5 is out", Download launching Chrome on the releases
+  page; `-PbuildNumber=5` → "Up to date."; Wi-Fi and data off → "Couldn't check: Unable to
+  resolve host api.github.com". The emulator has the `1.0.1` debug build installed.
+  **Reviewer, judgement calls:** (1) The check is a button, never a timer and never a silent
+  download — an app that side-loads its own APK would need `REQUEST_INSTALL_PACKAGES`, which is
+  far more power than "tell me when there's a new build" is worth. (2) It sends the user to the
+  releases *page* rather than the release's `html_url`: the workflow keeps exactly one release,
+  so they are the same target, and the constant needs no response field to be right.
+  (3) `versionName` comes from `PackageManager`, not `BuildConfig` — it is the version actually
+  installed, and it keeps `buildConfig` off. (4) No test for the HTTP call itself: the suite has
+  no MockWebServer and DESIGN §7 puts the network path in the manual pass, so only the ranking
+  is unit-tested. (5) The 404 GitHub returns for a repo with no releases surfaces as
+  `Failed("GitHub returned HTTP 404")` — honest, and unreachable while the release workflow runs.
+
 ## Pending device checks
 
 Carried from the entries above; none is blocked, all need an emulator or phone.

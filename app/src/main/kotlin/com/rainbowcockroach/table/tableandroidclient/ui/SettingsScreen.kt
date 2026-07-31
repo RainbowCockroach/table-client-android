@@ -1,5 +1,8 @@
 package com.rainbowcockroach.table.tableandroidclient.ui
 
+import android.content.ActivityNotFoundException
+import android.content.Context
+import android.content.Intent
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -12,6 +15,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Visibility
 import androidx.compose.material.icons.filled.VisibilityOff
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
@@ -34,14 +38,18 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.unit.dp
+import androidx.core.net.toUri
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.rainbowcockroach.table.tableandroidclient.settings.TableSettings
+import com.rainbowcockroach.table.tableandroidclient.update.RELEASES_PAGE_URL
+import com.rainbowcockroach.table.tableandroidclient.update.UpdateStatus
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun SettingsScreen(viewModel: SettingsViewModel, onBack: () -> Unit) {
     val stored by viewModel.settings.collectAsStateWithLifecycle()
     val test by viewModel.connectionTest.collectAsStateWithLifecycle()
+    val update by viewModel.updateCheck.collectAsStateWithLifecycle()
 
     Scaffold(
         modifier = Modifier.fillMaxSize(),
@@ -62,8 +70,13 @@ fun SettingsScreen(viewModel: SettingsViewModel, onBack: () -> Unit) {
         SettingsForm(
             initial = settings,
             test = test,
+            update = update,
+            appVersion = viewModel.appVersion,
             onSave = { viewModel.save(it); onBack() },
             onTest = viewModel::testConnection,
+            onCheckForUpdate = viewModel::checkForUpdate,
+            onDismissUpdate = viewModel::dismissUpdate,
+            onNoBrowser = viewModel::updateOpenFailed,
             modifier = Modifier.padding(padding),
         )
     }
@@ -73,8 +86,13 @@ fun SettingsScreen(viewModel: SettingsViewModel, onBack: () -> Unit) {
 private fun SettingsForm(
     initial: TableSettings,
     test: ConnectionTest?,
+    update: UpdateStatus?,
+    appVersion: String,
     onSave: (TableSettings) -> Unit,
     onTest: (TableSettings) -> Unit,
+    onCheckForUpdate: () -> Unit,
+    onDismissUpdate: () -> Unit,
+    onNoBrowser: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
     var hostUrl by remember { mutableStateOf(initial.hostUrl) }
@@ -132,6 +150,13 @@ private fun SettingsForm(
             onCheckedChange = { uploadOnWifiOnly = it },
         )
         BatteryOptimizationNotice()
+        UpdateRow(
+            appVersion = appVersion,
+            update = update,
+            onCheckForUpdate = onCheckForUpdate,
+            onDismissUpdate = onDismissUpdate,
+            onNoBrowser = onNoBrowser,
+        )
         Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
             Button(onClick = { onSave(edited) }, enabled = edited.isConfigured) { Text("Save") }
             OutlinedButton(onClick = { onTest(edited) }, enabled = edited.isConfigured) {
@@ -140,6 +165,84 @@ private fun SettingsForm(
         }
         test?.let { ConnectionTestResult(it) }
     }
+}
+
+@Composable
+private fun UpdateRow(
+    appVersion: String,
+    update: UpdateStatus?,
+    onCheckForUpdate: () -> Unit,
+    onDismissUpdate: () -> Unit,
+    onNoBrowser: () -> Unit,
+) {
+    val context = LocalContext.current
+    Row(verticalAlignment = Alignment.CenterVertically) {
+        Column(Modifier.weight(1f)) {
+            Text("Version $appVersion", style = MaterialTheme.typography.bodyLarge)
+            UpdateCheckResult(update)
+        }
+        OutlinedButton(
+            onClick = onCheckForUpdate,
+            enabled = update != UpdateStatus.Checking,
+        ) {
+            Text("Check for update")
+        }
+    }
+    if (update is UpdateStatus.Available) {
+        UpdateAvailableDialog(
+            version = update.version,
+            installedVersion = appVersion,
+            onDownload = { if (context.openReleasesPage()) onDismissUpdate() else onNoBrowser() },
+            onDismiss = onDismissUpdate,
+        )
+    }
+}
+
+private fun Context.openReleasesPage(): Boolean = try {
+    startActivity(Intent(Intent.ACTION_VIEW, RELEASES_PAGE_URL.toUri()))
+    true
+} catch (_: ActivityNotFoundException) {
+    false
+}
+
+/** DESIGN §4: the download is the browser's job, and only the user's yes starts it. */
+@Composable
+private fun UpdateAvailableDialog(
+    version: String,
+    installedVersion: String,
+    onDownload: () -> Unit,
+    onDismiss: () -> Unit,
+) = AlertDialog(
+    onDismissRequest = onDismiss,
+    title = { Text("Update available") },
+    text = {
+        Text(
+            "Version $version is out; this build is $installedVersion. Open the releases " +
+                "page to download the new APK?"
+        )
+    },
+    confirmButton = { Button(onClick = onDownload) { Text("Download") } },
+    dismissButton = { OutlinedButton(onClick = onDismiss) { Text("Not now") } },
+)
+
+@Composable
+private fun UpdateCheckResult(update: UpdateStatus?) = when (update) {
+    // An available update speaks through the dialog; a second line under the version would
+    // only repeat it.
+    null, is UpdateStatus.Available -> Unit
+
+    UpdateStatus.Checking -> Text("Checking…", style = MaterialTheme.typography.bodySmall)
+
+    is UpdateStatus.UpToDate -> Text(
+        "Up to date.",
+        style = MaterialTheme.typography.bodySmall,
+    )
+
+    is UpdateStatus.Failed -> Text(
+        "Couldn't check: ${update.message}",
+        style = MaterialTheme.typography.bodySmall,
+        color = MaterialTheme.colorScheme.error,
+    )
 }
 
 /** Absent once the exemption is granted: there is nothing left for the user to do. */

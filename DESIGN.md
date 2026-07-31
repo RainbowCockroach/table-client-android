@@ -16,6 +16,7 @@ table-client-android/
       transfer/     # WorkManager workers, queue repository, resume logic
       crypto/       # streaming SHA-256
       settings/     # EncryptedSharedPreferences-backed settings store
+      update/       # GitHub release check behind the Settings "Check for update" button
       share/        # ShareActivity: share-sheet intake
       ui/           # Compose screens: Main, Settings
     src/test/       # JVM tests for api/ + transfer/ against a local table-server
@@ -46,13 +47,14 @@ Everything outside `ui/` and `share/` is plain Kotlin with no Android UI depende
 - **In-app picker**: `ACTION_OPEN_DOCUMENT` with multi-select.
 - **Notifications**: per-transfer progress (from the foreground worker) plus completion/failure; tapping a completed download opens the file via `MediaStore`.
 - Settings live in **EncryptedSharedPreferences** (API key) and plain DataStore (host URL, preferences).
+- **Update check**: the app is distributed as an APK from GitHub Releases (`.github/workflows/release.yml`), so no store tells it a newer build exists. Settings' "Check for update" reads `GET /repos/RainbowCockroach/table-client-android/releases/latest` — unauthenticated, no API key involved, nothing to do with the table server — and compares the release tag with the installed `versionName`; both are `<baseVersionName>.<CI run number>`, so the comparison is component-wise numeric and a tag that is not a dotted number is reported as a failed check rather than as an update. A newer tag prompts, and only the user's yes opens the releases page in a browser. Never on a timer, never a silent download, never a self-install: the check is a button, and the download is the browser's job.
 
 ## 5. Screens
 
 Same two-screen shape as every client:
 
 1. **Main** — server file list under "On the table" (poll ~5 s while foregrounded; entries show name, size, expiry countdown, and upload progress for `uploading` files, which are downloadable immediately per the live-relay design; the per-file action is "Take") + local transfer queue with per-item progress. "Take all" action on the list, "Clear all" on the queue — it dismisses every settled transfer, the same as dismissing each by hand.
-2. **Settings** — host URL, API key, "test connection" (hits `GET /files`), optional "upload on Wi-Fi only" toggle, and — only while the app is still battery-optimized — a notice that queued transfers may wait, with a button to the system screen that grants the exemption (§6).
+2. **Settings** — host URL, API key, "test connection" (hits `GET /files`), optional "upload on Wi-Fi only" toggle, a version row with "Check for update" that offers the releases page when GitHub has a newer build (§4), and — only while the app is still battery-optimized — a notice that queued transfers may wait, with a button to the system screen that grants the exemption (§6).
 
 ## 6. Android-specific edge cases
 
@@ -71,7 +73,7 @@ Automation lives where the correctness risk lives — the transfer logic — and
 
 - **Conformance integration tests** (the core suite): JVM tests in `src/test/` that re-run the server's conformance scenarios through `api/` + `transfer/` against a local `table-server` (`TABLE_URL`/`TABLE_API_KEY` from env or a Gradle property; tests skip with a clear message when no server is up). Roundtrip, upload resume, Range resume, hash-mismatch handling, ack semantics including 404-means-success — the same list as `table-server/conformance/scenarios/`, driven by this client's real code paths.
 - **Fault-path tests**: run the dev server with `TABLE_TEST_FAULTS=1` and use `X-Test-Drop-After` to cut the connection at an exact byte in both directions — the deterministic version of "Wi-Fi died mid-transfer". Asserts the client resumes from the committed offset / partial-file size rather than restarting.
-- **Unit tests** for the fiddly pure logic: rebuilding the SHA-256 digest from a partial temp file on download resume, queue state transitions, collision-safe naming, re-open + `skip(offset)` upload resume.
+- **Unit tests** for the fiddly pure logic: rebuilding the SHA-256 digest from a partial temp file on download resume, queue state transitions, collision-safe naming, re-open + `skip(offset)` upload resume, ranking a release tag against the installed version. The update check's own HTTP call and browser hand-off are part of the manual release pass.
 - **WorkManager wiring**: one smoke test with `androidx.work.testing` (`TestDriver`) proving a queued transfer runs, retries on a retryable failure, and resumes rather than restarts.
 - **No UI automation.** Two screens, one user — Espresso would cost more than it catches. Share-sheet intake, notifications, and MediaStore publish are verified manually per release.
 

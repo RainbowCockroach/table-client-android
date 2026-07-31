@@ -19,6 +19,7 @@ import com.rainbowcockroach.table.tableandroidclient.transfer.UploadIntake
 import com.rainbowcockroach.table.tableandroidclient.transfer.UploadStaging
 import com.rainbowcockroach.table.tableandroidclient.transfer.UploadTask
 import com.rainbowcockroach.table.tableandroidclient.transfer.WorkTransferScheduler
+import com.rainbowcockroach.table.tableandroidclient.update.UpdateChecker
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.flow.first
@@ -62,6 +63,8 @@ class AppContainer(context: Context) {
 
     val notifications = TransferNotifications(appContext)
 
+    val updates = UpdateChecker(installedVersionName(appContext), http)
+
     val runner = TransferRunner(
         store = store,
         clientFor = ::currentClientOrNull,
@@ -85,3 +88,7 @@ class AppContainer(context: Context) {
     private suspend fun currentClientOrNull(): TableClient? =
         settings.settings.first().takeIf { it.isConfigured }?.let(::clientFor)
 }
+
+@Suppress("DEPRECATION") // The PackageInfoFlags overload is API 33+; minSdk here is 29.
+private fun installedVersionName(context: Context): String =
+    context.packageManager.getPackageInfo(context.packageName, 0).versionName.orEmpty()

@@ -126,6 +126,14 @@ the build number rather than committed: `versionName` = `baseVersionName` in
 
 Reproduce a CI version locally with `./gradlew assembleRelease -PbuildNumber=42`.
 
+Settings' **Check for update** asks GitHub for that one release
+(`/repos/RainbowCockroach/table-client-android/releases/latest`, unauthenticated) and compares
+its tag with the installed `versionName`. A newer tag prompts, and the prompt's Download button
+opens the releases page in a browser — the APK is installed by hand, as it was the first time.
+A local build is `1.0.<buildNumber>` and defaults to `1.0.1`, so on a debug build the check
+almost always reports an update; pass `-PbuildNumber=` to match the published run number if you
+need to see the up-to-date answer.
+
 Set these repository secrets (Settings → Secrets and variables → Actions) before the first
 run. Without them the workflow still succeeds, but the APK is unsigned and cannot be
 installed; the run logs a warning saying so.
