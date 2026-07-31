@@ -8,12 +8,12 @@ Prerequisite: a working `table-server` (local dev build is enough).
 
 | # | Checkpoint | Proves | Status |
 |---|---|---|---|
-| C1 | Core: `api/` + `crypto/` + `transfer/` with JVM conformance-scenario tests against a local server | conformance tests green | staged for review |
-| C2 | Fault-path tests: resume-not-restart in both directions via `TABLE_TEST_FAULTS` + `X-Test-Drop-After` | fault tests green | staged for review |
-| C3 | Settings screen + main list UI; download end-to-end (temp → verify → fsync → ack → MediaStore) | manual: file from server lands in Downloads, disappears from list | staged for review |
-| C4 | Uploads with resume; WorkManager wiring (queue survives process kill); `androidx.work.testing` smoke test | manual kill-and-resume + smoke test green | staged for review |
-| C5 | Share-sheet intake, notifications, polish (expiry countdowns, download-all, Wi-Fi-only toggle) | manual release pass (DESIGN.md §7) | staged for review |
-| C6 | Release CI (deferred): signed APK attached to `v*` tag releases | — | not started |
+| C1 | Core: `api/` + `crypto/` + `transfer/` with JVM conformance-scenario tests against a local server | conformance tests green | done |
+| C2 | Fault-path tests: resume-not-restart in both directions via `TABLE_TEST_FAULTS` + `X-Test-Drop-After` | fault tests green | done |
+| C3 | Settings screen + main list UI; download end-to-end (temp → verify → fsync → ack → MediaStore) | manual: file from server lands in Downloads, disappears from list | done |
+| C4 | Uploads with resume; WorkManager wiring (queue survives process kill); `androidx.work.testing` smoke test | manual kill-and-resume + smoke test green | done |
+| C5 | Share-sheet intake, notifications, polish (expiry countdowns, download-all, Wi-Fi-only toggle) | manual release pass (DESIGN.md §7) | done |
+| C6 | Release CI: every push to `main` publishes one signed APK as the sole GitHub Release | a run produces an installable APK | done |
 
 Status values: `not started` → `in progress` → `staged for review` → `done` (user committed).
 
@@ -273,3 +273,64 @@ having on a large upload, which raises it from cosmetic to the main reason to fi
   taking it as an argument (`progressNotificationId`, beside `settledNotificationId`). JVM suite
   green (transfer cases skipped, no dev server up), `assembleDebug` green. Needs a device check:
   notification gone on completion, both directions.
+
+- **2026-07-31 — C6 release CI, logged after the fact** (it shipped in `17fe73e`/`54d5254` on
+  2026-07-29 without a log line). **The shape differs from the row this table originally carried.**
+  Instead of a signed APK attached to `v*` tags, `.github/workflows/release.yml` builds on every
+  push to `main` and keeps exactly one release: it publishes `v<baseVersionName>.<run number>`
+  and then deletes every other release and its tag. `versionCode` is the run number and
+  `versionName` appends it to `baseVersionName` in `gradle.properties`, so neither needs a commit
+  to move forward — and renaming or recreating the workflow would reset the run number and push
+  `versionCode` backwards, which `README.md` says to fix by bumping `baseVersionName`. Signing
+  keys come from four repository secrets; without them the run still succeeds and warns, but the
+  APK is unsigned and uninstallable. A first attempt targeted GitLab CI (`.gitlab-ci.yml`,
+  `17fe73e`) and was replaced by the GitHub workflow in the next commit.
+
+- **2026-07-31 — release build minified; API key visibility toggle.** `isMinifyEnabled` and
+  `isShrinkResources` are on for `release`, so `proguard-rules.pro` is now real rules rather than
+  the template's comments: keep the `@Serializable` companions R8 full mode would drop,
+  `-dontwarn` for OkHttp's absent TLS providers and Tink's Error Prone annotations, `-keepnames`
+  on `TransferWorker` (WorkManager instantiates it by the class name stored in its own database,
+  so an obfuscated name would strand transfers queued before an upgrade), and the line-number
+  attributes that make `mapping.txt` useful. The workflow now ships `mapping-<version>.txt.gz`
+  beside the APK, since the prune leaves no older release to recover it from. Also
+  `localeFilters += "en"`, `META-INF` packaging excludes, `dependenciesInfo` off, and a show/hide
+  toggle on the Settings API key field (`material-icons-extended`).
+  **74 JVM tests green** (23 skipped, no dev server up), `assembleRelease` green — 3.2 MB unsigned.
+  **Not yet run on a device.** R8 full mode plus reflection is exactly what the JVM suite cannot
+  cover, so the minified APK still needs an install-and-transfer pass before it is trusted: a
+  download, an upload, and a queue that survives a process kill.
+
+- **2026-07-31 — the battery-optimization exemption, surfaced instead of only documented.**
+  DESIGN §6 asked for this to be documented; it is now a Settings row as well, because the
+  README is not where the user is standing when a queued transfer stalls. New
+  `ui/BatteryOptimization.kt`: `rememberBatteryExemption` reads
+  `PowerManager.isIgnoringBatteryOptimizations` and re-reads it in a `LifecycleResumeEffect`
+  (the user grants the exemption on a system screen and comes back, so a value read once would
+  be stale exactly when it matters), and `openBatteryOptimizationSettings` launches
+  `ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS`, falling back to the app's own details page on
+  a ROM that has no such screen. `SettingsScreen` gained `BatteryOptimizationNotice`, which
+  renders nothing once the app is exempt. DESIGN §5 and §6 were updated before the code went
+  in, and §3 now records the Android 12+ background foreground-service refusal that until now
+  lived only in C4's judgement calls. `README.md` gained a "Battery optimization" section with
+  the manual path and the `dumpsys deviceidle` commands.
+  **74 JVM tests green** (23 skipped, no dev server up), `assembleDebug` green.
+  **Reviewer, judgement calls:** (1) `REQUEST_IGNORE_BATTERY_OPTIMIZATIONS` is *not* declared —
+  it would buy a one-tap dialog for a setting changed once, and Play policy restricts it to
+  apps Doze actually breaks. The list screen needs no permission. (2) The notice is not a
+  stored preference and so is not part of `TableSettings`: it reports OS state, and the only
+  thing the app can do about it is open a screen. (3) No test — `PowerManager` is not reachable
+  from the JVM suite and DESIGN §7 rules out UI automation, so this is a manual-pass item.
+  (4) Whether the exemption also lets a background `setForeground` succeed is Android's
+  documented behaviour but unverified here; the device check below is what would settle it.
+
+## Pending device checks
+
+Carried from the entries above; none is blocked, all need an emulator or phone.
+
+1. The icon-button and wording pass on the main screen (2026-07-30).
+2. The ongoing progress notification disappearing on completion, both directions (2026-07-30).
+3. A full transfer pass on the **minified** release APK (2026-07-31).
+4. The battery notice: shown while optimized, gone after the exemption is granted, and — with
+   it granted — whether a retry resumed from the background now keeps its progress notification
+   instead of logging the foreground-service refusal (2026-07-31).

@@ -33,7 +33,7 @@ Everything outside `ui/` and `share/` is plain Kotlin with no Android UI depende
 
 ## 3. Transfer queue
 
-- **WorkManager** is the executor: one `WorkRequest` per file, survives process death and reboot, `NETWORK_CONNECTED` constraint, exponential backoff. Long transfers run as foreground work (`dataSync` service type) with a progress notification.
+- **WorkManager** is the executor: one `WorkRequest` per file, survives process death and reboot, `NETWORK_CONNECTED` constraint, exponential backoff. Long transfers run as foreground work (`dataSync` service type) with a progress notification. Promotion to foreground is best-effort: Android 12+ refuses a foreground service started from the background, which is exactly where a retry or a reboot-resume begins, and the transfer then continues as ordinary background work with only the notification lost. Battery-optimization exemption (§6) is one of the documented conditions that lift that refusal.
 - A small **Room/SQLite queue table** carries what WorkManager doesn't: upload session id, file id, temp path, bytes done — the state the worker needs to resume via `HEAD`/`Range` instead of restarting, plus what the UI needs to render the queue.
 - States: `queued → running → verifying → done | failed(retryable) | failed(permanent)`.
 - Concurrency cap: 2 uploads / 2 downloads.
@@ -52,14 +52,14 @@ Everything outside `ui/` and `share/` is plain Kotlin with no Android UI depende
 Same two-screen shape as every client:
 
 1. **Main** — server file list under "On the table" (poll ~5 s while foregrounded; entries show name, size, expiry countdown, and upload progress for `uploading` files, which are downloadable immediately per the live-relay design; the per-file action is "Take") + local transfer queue with per-item progress. "Take all" action on the list, "Clear all" on the queue — it dismisses every settled transfer, the same as dismissing each by hand.
-2. **Settings** — host URL, API key, "test connection" (hits `GET /files`), optional "upload on Wi-Fi only" toggle.
+2. **Settings** — host URL, API key, "test connection" (hits `GET /files`), optional "upload on Wi-Fi only" toggle, and — only while the app is still battery-optimized — a notice that queued transfers may wait, with a button to the system screen that grants the exemption (§6).
 
 ## 6. Android-specific edge cases
 
 | Situation | Handling |
 |---|---|
 | Process death / reboot mid-transfer | WorkManager re-runs the worker; queue table has the session id and offsets; resume via `HEAD`/`Range`. |
-| Doze / App Standby delaying transfers | Foreground work largely avoids it while running; queued work may wait. Document the battery-optimization exemption for users who want instant pickup. |
+| Doze / App Standby delaying transfers | Foreground work largely avoids it while running; queued work may wait. Settings carries the battery-optimization notice while the app is optimized and opens the system list; the one-tap request is not worth `REQUEST_IGNORE_BATTERY_OPTIMIZATIONS`, so granting it stays the user's own action. The exemption should also lift the background foreground-service refusal in §3. |
 | `content://` permission revoked before a retry | Permanent failure with a clear "re-share the file" message. Reachable for a picked file whose grant the user revoked; a shared one was copied at intake (§4). |
 | Source stream can't seek for upload resume | Re-open + `skip(offset)` — correctness identical, cost is a local re-read. |
 | Storage full during download | Retryable failure surfaced in the queue; partial temp file is kept and `Range` resume continues after space is freed. |

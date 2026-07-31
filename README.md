@@ -90,6 +90,33 @@ partial temp file (`cacheDir/downloads/<file-id>.part`), so both continue where 
 `adb shell run-as com.rainbowcockroach.table.tableandroidclient ls -l cache/downloads` shows
 the partial file growing rather than restarting.
 
+## Battery optimization (instant pickup)
+
+WorkManager's queue is deferrable by design — that is the trade for surviving process death
+and reboot. With the screen off, **Doze** batches deferred work into maintenance windows that
+grow further apart the longer the device sits idle, and **App Standby** caps how much of it an
+app gets by how often the app is opened. An ephemeral file drop is opened rarely, so it lands
+in a low bucket precisely when a queued transfer is waiting.
+
+A transfer already running as foreground work is largely unaffected. The delay is in *starting*
+one, so it shows up as a queued upload that does nothing until the phone is picked up again.
+
+Settings shows a "Transfers may be delayed" notice with a **Battery** button while the app is
+still optimized; the button opens the system list, and the row disappears once the exemption is
+granted. By hand the path is Settings → Apps → table → Battery → **Unrestricted**. The app does
+not declare `REQUEST_IGNORE_BATTERY_OPTIMIZATIONS`, so there is no one-tap dialog.
+
+To check or drive it from a shell:
+
+```sh
+adb shell dumpsys deviceidle whitelist | grep tableandroidclient   # exempt?
+adb shell dumpsys deviceidle force-idle                            # simulate Doze
+adb shell dumpsys deviceidle unforce && adb shell dumpsys battery reset
+```
+
+Note that OEM battery managers (Samsung, Xiaomi, OnePlus) enforce more than stock Android and
+have their own screens; `dontkillmyapp.com` covers the per-vendor steps.
+
 ## Releases (`.github/workflows/release.yml`)
 
 Every push to `main` builds a release APK and publishes it as a GitHub Release, then deletes

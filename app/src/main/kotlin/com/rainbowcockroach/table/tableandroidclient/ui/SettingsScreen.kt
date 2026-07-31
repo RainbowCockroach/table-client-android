@@ -30,6 +30,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.unit.dp
@@ -130,6 +131,7 @@ private fun SettingsForm(
             checked = uploadOnWifiOnly,
             onCheckedChange = { uploadOnWifiOnly = it },
         )
+        BatteryOptimizationNotice()
         Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
             Button(onClick = { onSave(edited) }, enabled = edited.isConfigured) { Text("Save") }
             OutlinedButton(onClick = { onTest(edited) }, enabled = edited.isConfigured) {
@@ -137,6 +139,24 @@ private fun SettingsForm(
             }
         }
         test?.let { ConnectionTestResult(it) }
+    }
+}
+
+/** Absent once the exemption is granted: there is nothing left for the user to do. */
+@Composable
+private fun BatteryOptimizationNotice() {
+    if (rememberBatteryExemption()) return
+    val context = LocalContext.current
+    Row(verticalAlignment = Alignment.CenterVertically) {
+        Column(Modifier.weight(1f)) {
+            Text("Transfers may be delayed", style = MaterialTheme.typography.bodyLarge)
+            Text(
+                "Android holds queued transfers while the screen is off. Turn battery " +
+                    "optimization off for table to have them start straight away.",
+                style = MaterialTheme.typography.bodySmall,
+            )
+        }
+        OutlinedButton(onClick = { context.openBatteryOptimizationSettings() }) { Text("Battery") }
     }
 }
 
