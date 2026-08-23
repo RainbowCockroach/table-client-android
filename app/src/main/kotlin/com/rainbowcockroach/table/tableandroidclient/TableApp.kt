@@ -9,6 +9,7 @@ import com.rainbowcockroach.table.tableandroidclient.settings.TableSettings
 import com.rainbowcockroach.table.tableandroidclient.transfer.ContentUploadSources
 import com.rainbowcockroach.table.tableandroidclient.transfer.DownloadTask
 import com.rainbowcockroach.table.tableandroidclient.transfer.MediaStoreDownloadPublisher
+import com.rainbowcockroach.table.tableandroidclient.transfer.PublishedDownloads
 import com.rainbowcockroach.table.tableandroidclient.transfer.RoomTransferStore
 import com.rainbowcockroach.table.tableandroidclient.transfer.TransferNotifications
 import com.rainbowcockroach.table.tableandroidclient.transfer.TransferQueue
@@ -62,6 +63,8 @@ class AppContainer(context: Context) {
     val uploads = UploadIntake(appContext.contentResolver, transfers, staging)
 
     val notifications = TransferNotifications(appContext)
+
+    val publishedDownloads = PublishedDownloads(appContext.contentResolver)
 
     val updates = UpdateChecker(installedVersionName(appContext), http)
 

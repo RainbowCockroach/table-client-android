@@ -4,7 +4,8 @@ Spec-first repo. Before implementing anything, read in this order:
 
 1. `DESIGN.md` (this repo) — the Android-specific design.
 2. `../DESIGN.md` (workspace root, one level up) — protocol and lifecycle (§1–§2) and the client conformance checklist (§3). Every transfer path must satisfy the checklist.
-3. `../table-server/openapi.yaml` — the API contract; requests and parsing must match it exactly.
+3. `../UI.md` (workspace root) — the shared client UI: layout, row anatomy, icons, state strings, settings, colour. Its §11 is a UI conformance checklist, the surface-level twin of §3 above; §12 records what this client still has to change. Read it before touching any screen.
+4. `../table-server/openapi.yaml` — the API contract; requests and parsing must match it exactly.
 
 The spec wins over improvisation. If code and spec disagree, stop and reconcile the spec first.
 

@@ -12,6 +12,8 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
@@ -31,10 +33,15 @@ class MainViewModel(private val container: AppContainer) : ViewModel() {
     private val listState = MutableStateFlow(FileListState())
     val files: StateFlow<FileListState> = listState.asStateFlow()
 
-    private val intakeState = MutableStateFlow<String?>(null)
+    private val noticeState = MutableStateFlow<String?>(null)
 
-    /** What the picker itself never says: which of the picked files could not be read. */
-    val intakeMessage: StateFlow<String?> = intakeState.asStateFlow()
+    /** The transient line above the list: what the picker never says, and a reveal that failed. */
+    val notice: StateFlow<String?> = noticeState.asStateFlow()
+
+    private val goneState = MutableStateFlow(emptySet<String>())
+
+    /** Ids of landed downloads whose published copy is no longer there (`../UI.md` §5). */
+    val goneDownloads: StateFlow<Set<String>> = goneState.asStateFlow()
 
     val transfers: StateFlow<List<TransferRecord>> = container.transfers.transfers
         .stateIn(viewModelScope, SharingStarted.Eagerly, emptyList())
@@ -43,7 +50,16 @@ class MainViewModel(private val container: AppContainer) : ViewModel() {
     val settings: StateFlow<TableSettings?> = container.settings.settings
         .stateIn(viewModelScope, SharingStarted.Eagerly, null)
 
+    init {
+        // Bytes-done updates churn the record list; only the landed URIs are worth re-checking.
+        viewModelScope.launch {
+            transfers.map(::landedCopies).distinctUntilChanged().collect(::checkPublishedCopies)
+        }
+    }
+
     suspend fun refresh() {
+        // A file manager can delete a taken file at any time, so this rides the list poll.
+        checkPublishedCopies(landedCopies(transfers.value))
         val current = settings.value
         if (current == null || !current.isConfigured) {
             listState.value = FileListState(error = null, loaded = false)
@@ -71,11 +87,23 @@ class MainViewModel(private val container: AppContainer) : ViewModel() {
     fun upload(uris: List<Uri>) = viewModelScope.launch {
         if (uris.isEmpty()) return@launch
         val intake = withContext(Dispatchers.IO) { container.uploads.accept(uris) }
-        intakeState.value = intakeProblem(intake)
+        noticeState.value = intakeProblem(intake)
     }
 
-    fun dismissIntakeMessage() {
-        intakeState.value = null
+    fun dismissNotice() {
+        noticeState.value = null
+    }
+
+    fun reportRevealFailed() {
+        noticeState.value = "Couldn't open the Downloads folder."
+    }
+
+    private suspend fun checkPublishedCopies(landed: List<Pair<String, String>>) {
+        goneState.value = withContext(Dispatchers.IO) {
+            landed.filterNot { (_, uri) -> container.publishedDownloads.exists(uri) }
+                .map { (id, _) -> id }
+                .toSet()
+        }
     }
 
     fun retry(transferId: String) = viewModelScope.launch { container.transfers.retry(transferId) }
@@ -92,3 +120,7 @@ class MainViewModel(private val container: AppContainer) : ViewModel() {
         container.transfers.dismiss(transferId)
     }
 }
+
+/** Transfer id to the `content://` URI it was published as, for the rows that have one. */
+private fun landedCopies(records: List<TransferRecord>): List<Pair<String, String>> =
+    records.mapNotNull { record -> record.publishedUri?.let { record.id to it } }

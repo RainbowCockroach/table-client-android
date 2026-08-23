@@ -14,6 +14,7 @@ Prerequisite: a working `table-server` (local dev build is enough).
 | C4 | Uploads with resume; WorkManager wiring (queue survives process kill); `androidx.work.testing` smoke test | manual kill-and-resume + smoke test green | done |
 | C5 | Share-sheet intake, notifications, polish (expiry countdowns, download-all, Wi-Fi-only toggle) | manual release pass (DESIGN.md §7) | done |
 | C6 | Release CI: every push to `main` publishes one signed APK as the sole GitHub Release | a run produces an installable APK | done |
+| C7 | **Adopt `../UI.md`**: shelf under 900dp and the rail at or above it (there is no tablet layout today — the phone layout runs at every width); icon pass; reveal-in-folder on landed rows (**done 2026-08-23**, see the log); palette + authored dark mode from `../tokens.json`, seeding a static `ColorScheme` (dynamic colour deliberately not adopted) | `UI.md` §11 checklist holds on a phone and on a tablet in both orientations; manual pass | in progress |
 
 Status values: `not started` → `in progress` → `staged for review` → `done` (user committed).
 
@@ -354,6 +355,35 @@ having on a large upload, which raises it from cosmetic to the main reason to fi
   is unit-tested. (5) The 404 GitHub returns for a repo with no releases surfaces as
   `Failed("GitHub returned HTTP 404")` — honest, and unreachable while the release workflow runs.
 
+- **2026-08-23 — "Show in folder" on a landed download.** A taken file said where it went and
+  nothing more; this is `../UI.md` §5's reveal, the first piece of C7 to land. New
+  `transfer/PublishedDownloads.kt` (does the published `content://` row still resolve?) and
+  `ui/DownloadsFolder.kt`, which picks the first intent the device answers:
+  `ACTION_VIEW_DOWNLOADS`, then `ACTION_VIEW` on DocumentsUI's `primary:Download` as
+  `vnd.android.document/directory`. `MainViewModel` gained `goneDownloads` — recomputed when the
+  landed URIs change and again on each 5 s list poll, since a file manager can delete the file
+  with nothing to tell the app — and `intakeMessage` became `notice`, now that a failed reveal
+  shares the banner. `TransferRow` shows a folder icon on a landed download and drops it, with
+  the meta line becoming `moved or deleted`, once the copy is gone. `../UI.md` §5 and DESIGN §4
+  were reconciled first (see judgement call 1). Manifest: a `VIEW_DOWNLOADS` `<queries>` entry,
+  without which the resolve check is blind on API 30+.
+  **79 JVM tests** (55 passed, 24 skipped with no dev server up), `assembleDebug` green.
+  **Verified on the API 36 emulator**: the folder button shows on landed downloads and on no
+  other row; tapping it resumes DocumentsUI's `ViewDownloadsActivity` at `Download/`; deleting
+  a published row from MediaStore turns that row into `moved or deleted` with only its dismiss
+  left, within one poll. Device check 5 below is the end-to-end version against a live server.
+  **Reviewer, judgement calls:** (1) `../UI.md` said "`ACTION_VIEW` on the MediaStore collection",
+  which nothing on the device handles — DocumentsUI answers `VIEW_DOWNLOADS`, and there is no
+  select-this-file intent on Android at all. The spec cell now names the two calls and a
+  sentence says the target is the folder, not the file; the other three clients are untouched.
+  (2) Reveal always goes to `Download/` rather than to the file's own parent — every taken file
+  is published there, so the two are the same place. (3) The button is absent, not disabled,
+  when neither intent resolves: a device with no file manager has nothing to show.
+  (4) The landed *upload* row's reveal (`../UI.md` §5's last line) is not in this change — the
+  source is a `content://` grant, not a Downloads entry, and it wants its own decision.
+  (5) No test: `Intent`, `PackageManager` and `MediaStore` are all outside the JVM suite and
+  DESIGN §7 puts them in the manual pass.
+
 ## Pending device checks
 
 Carried from the entries above; none is blocked, all need an emulator or phone.
@@ -364,3 +394,6 @@ Carried from the entries above; none is blocked, all need an emulator or phone.
 4. The battery notice: shown while optimized, gone after the exemption is granted, and — with
    it granted — whether a retry resumed from the background now keeps its progress notification
    instead of logging the foreground-service refusal (2026-07-31).
+5. Reveal end to end: take a file, tap **Show in folder**, and confirm the Files app opens at
+   `Download/`; then delete the file from there and confirm the row turns into `moved or
+   deleted` with only its dismiss left (2026-08-23).

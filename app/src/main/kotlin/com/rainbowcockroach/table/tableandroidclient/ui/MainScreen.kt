@@ -1,5 +1,7 @@
 package com.rainbowcockroach.table.tableandroidclient.ui
 
+import android.content.Context
+import android.content.Intent
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
@@ -18,6 +20,7 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.FolderOpen
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material3.Button
@@ -35,9 +38,11 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.produceState
+import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.Lifecycle
@@ -58,8 +63,13 @@ fun MainScreen(viewModel: MainViewModel, onOpenSettings: () -> Unit) {
     val settings by viewModel.settings.collectAsStateWithLifecycle()
     val list by viewModel.files.collectAsStateWithLifecycle()
     val transfers by viewModel.transfers.collectAsStateWithLifecycle()
-    val intakeMessage by viewModel.intakeMessage.collectAsStateWithLifecycle()
+    val notice by viewModel.notice.collectAsStateWithLifecycle()
+    val gone by viewModel.goneDownloads.collectAsStateWithLifecycle()
     val now = tickingClock()
+    val context = LocalContext.current
+    // A device with no file manager gets no reveal button rather than a button that fails.
+    val revealIntent = remember(context) { downloadsFolderIntent(context) }
+    val onReveal = revealIntent?.let { intent -> { showDownloadsFolder(context, intent, viewModel) } }
 
     PollWhileResumed(settings?.isConfigured == true) { viewModel.refresh() }
 
@@ -83,11 +93,11 @@ fun MainScreen(viewModel: MainViewModel, onOpenSettings: () -> Unit) {
         Column(Modifier.padding(padding).fillMaxSize()) {
             val current = settings ?: return@Column
             list.error?.let { Banner(it) }
-            intakeMessage?.let { message ->
+            notice?.let { message ->
                 Banner(message)
                 LaunchedEffect(message) {
-                    delay(INTAKE_MESSAGE_MILLIS)
-                    viewModel.dismissIntakeMessage()
+                    delay(NOTICE_MILLIS)
+                    viewModel.dismissNotice()
                 }
             }
             if (!current.isConfigured) {
@@ -130,6 +140,8 @@ fun MainScreen(viewModel: MainViewModel, onOpenSettings: () -> Unit) {
                     items(transfers, key = { "transfer-${it.id}" }) { transfer ->
                         TransferRow(
                             transfer = transfer,
+                            gone = transfer.id in gone,
+                            onReveal = onReveal,
                             onRetry = { viewModel.retry(transfer.id) },
                             onDismiss = { viewModel.dismiss(transfer.id) },
                         )
@@ -194,7 +206,13 @@ private fun ServerFileRow(
 }
 
 @Composable
-private fun TransferRow(transfer: TransferRecord, onRetry: () -> Unit, onDismiss: () -> Unit) {
+private fun TransferRow(
+    transfer: TransferRecord,
+    gone: Boolean,
+    onReveal: (() -> Unit)?,
+    onRetry: () -> Unit,
+    onDismiss: () -> Unit,
+) {
     Row(
         modifier = Modifier.fillMaxWidth(),
         verticalAlignment = Alignment.CenterVertically,
@@ -206,7 +224,7 @@ private fun TransferRow(transfer: TransferRecord, onRetry: () -> Unit, onDismiss
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis,
             )
-            Text(label(transfer), style = MaterialTheme.typography.bodySmall)
+            Text(label(transfer, gone), style = MaterialTheme.typography.bodySmall)
             if (transfer.state == TransferState.RUNNING || transfer.state == TransferState.VERIFYING) {
                 Progress(transfer.bytesDone, transfer.size)
             }
@@ -216,6 +234,12 @@ private fun TransferRow(transfer: TransferRecord, onRetry: () -> Unit, onDismiss
         }
         if (transfer.state == TransferState.FAILED) {
             IconAction(Icons.Filled.Refresh, "Retry now", onRetry)
+        }
+        // UI.md §5: the landed row's action, and it goes away with the file it would show.
+        if (onReveal != null && transfer.state == TransferState.DONE &&
+            transfer.publishedUri != null && !gone
+        ) {
+            IconAction(Icons.Filled.FolderOpen, "Show in folder", onReveal)
         }
         if (transfer.isFinished) {
             IconAction(Icons.Filled.Close, "Dismiss", onDismiss)
@@ -266,7 +290,11 @@ private fun NotConfigured(onOpenSettings: () -> Unit) = Column(
     Button(onClick = onOpenSettings) { Text("Open settings") }
 }
 
-private const val INTAKE_MESSAGE_MILLIS = 6_000L
+private fun showDownloadsFolder(context: Context, intent: Intent, viewModel: MainViewModel) {
+    runCatching { context.startActivity(intent) }.onFailure { viewModel.reportRevealFailed() }
+}
+
+private const val NOTICE_MILLIS = 6_000L
 
 private fun arrow(direction: TransferDirection) =
     if (direction == TransferDirection.UPLOAD) "↑" else "↓"
@@ -280,13 +308,17 @@ private fun describe(file: TableFile, now: Instant): String = when (file.state) 
     ).joinToString(" · ")
 }
 
-private fun label(transfer: TransferRecord): String = when (transfer.state) {
+private fun label(transfer: TransferRecord, gone: Boolean = false): String = when (transfer.state) {
     TransferState.QUEUED -> "Queued"
     TransferState.RUNNING -> "${formatBytes(transfer.bytesDone)} of ${formatBytes(transfer.size)}"
     TransferState.VERIFYING ->
         if (transfer.direction == TransferDirection.UPLOAD) "Finishing" else "Verifying"
 
-    TransferState.DONE -> transfer.publishedName?.let { "Saved to Downloads as $it" } ?: "Sent"
+    TransferState.DONE -> when {
+        transfer.publishedName == null -> "Sent"
+        gone -> "moved or deleted"
+        else -> "Saved to Downloads as ${transfer.publishedName}"
+    }
     // WorkManager owns the retry; the button is only for someone who would rather not wait.
     TransferState.FAILED -> if (transfer.failure?.retryable == true) "Retrying soon" else "Failed"
 }
