@@ -98,6 +98,10 @@ class MainViewModel(private val container: AppContainer) : ViewModel() {
         noticeState.value = "Couldn't open the Downloads folder."
     }
 
+    fun reportOpenFailed() {
+        noticeState.value = "Couldn't open that file."
+    }
+
     private suspend fun checkPublishedCopies(landed: List<Pair<String, String>>) {
         goneState.value = withContext(Dispatchers.IO) {
             landed.filterNot { (_, uri) -> container.publishedDownloads.exists(uri) }

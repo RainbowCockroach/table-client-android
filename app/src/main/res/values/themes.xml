@@ -1,7 +1,11 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
 
-    <style name="Theme.TableClient" parent="android:Theme.Material.Light.NoActionBar" />
+    <!-- ../UI.md §10: the dark column is authored, so force-dark must never derive one. -->
+    <style name="Theme.TableClient" parent="android:Theme.Material.Light.NoActionBar">
+        <item name="android:windowBackground">@color/paper</item>
+        <item name="android:forceDarkAllowed">false</item>
+    </style>
 
     <!-- DESIGN §4: the share trampoline shows a toast, never a window. -->
     <style name="Theme.TableClient.Invisible" parent="android:Theme.Translucent.NoTitleBar" />

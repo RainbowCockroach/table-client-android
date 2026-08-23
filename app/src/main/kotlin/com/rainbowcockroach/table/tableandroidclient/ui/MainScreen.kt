@@ -6,34 +6,23 @@ import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.safeDrawingPadding
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.items
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.Add
-import androidx.compose.material.icons.filled.Close
-import androidx.compose.material.icons.filled.FolderOpen
-import androidx.compose.material.icons.filled.Refresh
-import androidx.compose.material.icons.filled.Settings
-import androidx.compose.material3.Button
-import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.material3.HorizontalDivider
-import androidx.compose.material3.Icon
-import androidx.compose.material3.IconButton
-import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.Scaffold
+import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
-import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -41,23 +30,29 @@ import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.repeatOnLifecycle
-import com.rainbowcockroach.table.tableandroidclient.api.FileState
 import com.rainbowcockroach.table.tableandroidclient.api.TableFile
 import com.rainbowcockroach.table.tableandroidclient.transfer.TransferDirection
 import com.rainbowcockroach.table.tableandroidclient.transfer.TransferRecord
-import com.rainbowcockroach.table.tableandroidclient.transfer.TransferState
+import com.rainbowcockroach.table.tableandroidclient.ui.theme.Metrics
+import com.rainbowcockroach.table.tableandroidclient.ui.theme.columnSeam
+import com.rainbowcockroach.table.tableandroidclient.ui.theme.seam
+import com.rainbowcockroach.table.tableandroidclient.ui.theme.tableColors
+import com.rainbowcockroach.table.tableandroidclient.ui.theme.well
 import kotlinx.coroutines.delay
 import java.time.Instant
 
-@OptIn(ExperimentalMaterial3Api::class)
+/** §11.4: the light that turns a border into a cut. */
+private const val SEAM_LIGHT_ALPHA = 0.5f
+
+/** The rail takes about a third of a tablet, inside §2's 380–480. */
+private const val RAIL_FRACTION = 0.32f
+
 @Composable
 fun MainScreen(viewModel: MainViewModel, onOpenSettings: () -> Unit) {
     val settings by viewModel.settings.collectAsStateWithLifecycle()
@@ -67,9 +62,7 @@ fun MainScreen(viewModel: MainViewModel, onOpenSettings: () -> Unit) {
     val gone by viewModel.goneDownloads.collectAsStateWithLifecycle()
     val now = tickingClock()
     val context = LocalContext.current
-    // A device with no file manager gets no reveal button rather than a button that fails.
-    val revealIntent = remember(context) { downloadsFolderIntent(context) }
-    val onReveal = revealIntent?.let { intent -> { showDownloadsFolder(context, intent, viewModel) } }
+    val handlers = rememberQueueHandlers(context, viewModel)
 
     PollWhileResumed(settings?.isConfigured == true) { viewModel.refresh() }
 
@@ -78,72 +71,55 @@ fun MainScreen(viewModel: MainViewModel, onOpenSettings: () -> Unit) {
         ActivityResultContracts.OpenMultipleDocuments()
     ) { uris -> viewModel.upload(uris) }
 
-    Scaffold(
-        modifier = Modifier.fillMaxSize(),
-        topBar = {
-            TopAppBar(
-                title = { Text("table") },
-                actions = {
-                    IconAction(Icons.Filled.Add, "Put files on the table") { pickFiles.launch(arrayOf("*/*")) }
-                    IconAction(Icons.Filled.Settings, "Settings", onOpenSettings)
-                },
-            )
-        },
-    ) { padding ->
-        Column(Modifier.padding(padding).fillMaxSize()) {
-            val current = settings ?: return@Column
-            list.error?.let { Banner(it) }
-            notice?.let { message ->
-                Banner(message)
-                LaunchedEffect(message) {
-                    delay(NOTICE_MILLIS)
-                    viewModel.dismissNotice()
-                }
+    Surface(Modifier.fillMaxSize(), color = tableColors.paper) {
+        BoxWithConstraints(Modifier.fillMaxSize().safeDrawingPadding()) {
+            // §1: the decision is the width the app actually has — never a device class.
+            val available = maxWidth
+            val availableHeight = maxHeight
+            val wide = available >= Metrics.FlipPoint
+            val table: @Composable (Modifier) -> Unit = { modifier ->
+                TableColumn(
+                    modifier = modifier,
+                    configured = settings?.isConfigured == true,
+                    ready = settings != null,
+                    list = list,
+                    transfers = transfers,
+                    notice = notice,
+                    now = now,
+                    medium = wide,
+                    onDismissNotice = viewModel::dismissNotice,
+                    onIntake = { pickFiles.launch(arrayOf("*/*")) },
+                    onOpenSettings = onOpenSettings,
+                    onTakeAll = viewModel::downloadAll,
+                    onTake = viewModel::download,
+                )
             }
-            if (!current.isConfigured) {
-                NotConfigured(onOpenSettings)
-                return@Column
-            }
-            LazyColumn(
-                modifier = Modifier.fillMaxSize(),
-                contentPadding = PaddingValues(16.dp),
-                verticalArrangement = Arrangement.spacedBy(12.dp),
-            ) {
-                item {
-                    SectionHeader("On the table") {
-                        if (list.files.isNotEmpty()) {
-                            TextButton(onClick = viewModel::downloadAll) { Text("Take all") }
-                        }
-                    }
-                }
-                if (list.files.isEmpty()) {
-                    item { Text(if (list.loaded) "Nothing on the table." else "Loading…") }
-                }
-                // A downloading file is in both lists, and the ids would collide as keys.
-                items(list.files, key = { "server-${it.id}" }) { file ->
-                    ServerFileRow(
-                        file = file,
-                        transfer = transfers.firstOrNull { it.remoteId == file.id },
-                        now = now,
-                        onDownload = { viewModel.download(file) },
+            if (wide) {
+                Row(Modifier.fillMaxSize()) {
+                    // §1: at rail width the bars belong to the table's column, not to the window.
+                    table(
+                        Modifier
+                            .weight(1f)
+                            .columnSeam(tableColors.line, tableColors.surface.copy(SEAM_LIGHT_ALPHA))
+                    )
+                    QueueRail(
+                        transfers = transfers,
+                        gone = gone,
+                        handlers = handlers,
+                        width = (available * RAIL_FRACTION).coerceIn(Metrics.RailMin, Metrics.RailMax),
                     )
                 }
-                if (transfers.isNotEmpty()) {
-                    item { HorizontalDivider() }
-                    item {
-                        SectionHeader("Transfers") {
-                            if (transfers.any { it.isFinished }) {
-                                TextButton(onClick = viewModel::dismissFinished) { Text("Clear all") }
-                            }
-                        }
-                    }
-                    items(transfers, key = { "transfer-${it.id}" }) { transfer ->
-                        TransferRow(
-                            transfer = transfer,
-                            gone = transfer.id in gone,
-                            onReveal = onReveal,
-                            onRetry = { viewModel.retry(transfer.id) },
-                            onDismiss = { viewModel.dismiss(transfer.id) },
+            } else {
+                Box(Modifier.fillMaxSize()) {
+                    table(Modifier.fillMaxSize())
+                    // §2: the shelf is absent when the queue is empty, and floats when it is not.
+                    if (transfers.isNotEmpty()) {
+                        QueueShelf(
+                            transfers = transfers,
+                            gone = gone,
+                            handlers = handlers,
+                            available = availableHeight,
+                            modifier = Modifier.align(Alignment.BottomCenter),
                         )
                     }
                 }
@@ -151,6 +127,175 @@ fun MainScreen(viewModel: MainViewModel, onOpenSettings: () -> Unit) {
         }
     }
 }
+
+@Composable
+private fun TableColumn(
+    modifier: Modifier,
+    configured: Boolean,
+    ready: Boolean,
+    list: FileListState,
+    transfers: List<TransferRecord>,
+    notice: String?,
+    now: Instant,
+    medium: Boolean,
+    onDismissNotice: () -> Unit,
+    onIntake: () -> Unit,
+    onOpenSettings: () -> Unit,
+    onTakeAll: () -> Unit,
+    onTake: (TableFile) -> Unit,
+) = Column(modifier) {
+    ActionBar(medium = medium, onIntake = onIntake, onOpenSettings = onOpenSettings)
+    // A failed poll stays up until the next one succeeds; a notice says its piece and goes.
+    list.error?.let { NoticeLane(it) }
+    notice?.let { message ->
+        NoticeLane(message)
+        LaunchedEffect(message) {
+            delay(NOTICE_MILLIS)
+            onDismissNotice()
+        }
+    }
+    if (!ready) return@Column
+    TableRegion(
+        modifier = Modifier.weight(1f).padding(regionPadding(medium)),
+        configured = configured,
+        list = list,
+        transfers = transfers,
+        now = now,
+        onOpenSettings = onOpenSettings,
+        onTakeAll = onTakeAll,
+        onTake = onTake,
+    )
+}
+
+/**
+ * `../UI.md` §2's region 1: the intake centred and the only filled button in the app, settings
+ * trailing, no wordmark, and — §11.4 — no divider beneath, because the bar is the same surface
+ * as the table under it.
+ */
+@Composable
+private fun ActionBar(medium: Boolean, onIntake: () -> Unit, onOpenSettings: () -> Unit) = Box(
+    modifier = Modifier
+        .fillMaxWidth()
+        .height(if (medium) Metrics.ActionBarMedium else Metrics.ActionBarCompact)
+        .padding(horizontal = 8.dp),
+    contentAlignment = Alignment.Center,
+) {
+    PillButton(
+        text = "Put files on the table",
+        onClick = onIntake,
+        icon = Glyphs.Plus,
+        container = tableColors.rose,
+        content = tableColors.onAccent,
+    )
+    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
+        GhostIconButton(Glyphs.Gear, "Settings", onOpenSettings)
+    }
+}
+
+/** §2's region 2: every error and notice in the app, and nowhere else. */
+@Composable
+private fun NoticeLane(message: String) = Text(
+    text = message,
+    style = MaterialTheme.typography.bodySmall,
+    color = tableColors.roseText,
+    modifier = Modifier
+        .fillMaxWidth()
+        .background(tableColors.roseTint)
+        .seam(tableColors.roseLine, tableColors.surface.copy(SEAM_LIGHT_ALPHA))
+        .padding(horizontal = 16.dp, vertical = 8.dp),
+)
+
+@Composable
+private fun TableRegion(
+    modifier: Modifier,
+    configured: Boolean,
+    list: FileListState,
+    transfers: List<TransferRecord>,
+    now: Instant,
+    onOpenSettings: () -> Unit,
+    onTakeAll: () -> Unit,
+    onTake: (TableFile) -> Unit,
+) = Box(modifier.fillMaxSize().well(tableColors.surface)) {
+    // §2: the row column caps at 720 and the margins absorb the rest.
+    Column(
+        Modifier
+            .widthIn(max = Metrics.RowColumnMax)
+            .fillMaxSize()
+            .align(Alignment.TopCenter)
+    ) {
+        if (!configured) {
+            CentredState(
+                title = "No server yet",
+                detail = "Add a host URL and API key to see what's on the table.",
+            ) {
+                PillButton("Open settings", onOpenSettings)
+            }
+            return@Column
+        }
+        SectionHeader("On the table", tableColors.roseText) {
+            if (list.files.isNotEmpty()) {
+                PillButton("Take all", onTakeAll)
+            }
+        }
+        if (list.files.isEmpty()) {
+            CentredState(if (list.loaded) "Nothing on the table." else "Loading…")
+            return@Column
+        }
+        LazyColumn(contentPadding = PaddingValues(bottom = 8.dp)) {
+            itemsIndexed(list.files, key = { _, file -> file.id }) { index, file ->
+                if (index > 0) HorizontalDivider(color = tableColors.divider)
+                ServerFileRow(
+                    file = file,
+                    transfer = transfers.firstOrNull { it.remoteId == file.id },
+                    now = now,
+                    onTake = { onTake(file) },
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun rememberQueueHandlers(context: Context, viewModel: MainViewModel): QueueHandlers {
+    // A device with no file manager gets no reveal button rather than a button that fails.
+    val folder = remember(context) { downloadsFolderIntent(context) }
+    return remember(context, folder, viewModel) {
+        val start = { intent: Intent, onFailure: () -> Unit ->
+            runCatching { context.startActivity(intent) }.onFailure { onFailure() }
+            Unit
+        }
+        val openOf = { record: TransferRecord ->
+            val uri = if (record.direction == TransferDirection.DOWNLOAD) {
+                record.publishedUri
+            } else {
+                record.sourceUri
+            }
+            uri?.let { openFileIntent(context, it, record.publishedName ?: record.name) }
+                ?.let { intent -> { start(intent, viewModel::reportOpenFailed) } }
+        }
+        QueueHandlers(
+            open = openOf,
+            // §5: a download reveals the folder it landed in; an upload's source is somewhere
+            // only its own app can point at, so that row opens the file instead.
+            reveal = { record ->
+                if (record.direction == TransferDirection.UPLOAD) {
+                    openOf(record)
+                } else if (record.publishedUri != null && folder != null) {
+                    { start(folder, viewModel::reportRevealFailed) }
+                } else {
+                    null
+                }
+            },
+            retry = viewModel::retry,
+            dismiss = viewModel::dismiss,
+            clear = viewModel::dismissFinished,
+        )
+    }
+}
+
+private fun regionPadding(medium: Boolean): PaddingValues = PaddingValues(
+    if (medium) Metrics.RegionPaddingMedium else Metrics.RegionPaddingCompact
+)
 
 /** One second is the resolution of the expiry countdowns, and the list has nothing finer. */
 @Composable
@@ -176,149 +321,4 @@ private fun PollWhileResumed(enabled: Boolean, poll: suspend () -> Unit) {
     }
 }
 
-@Composable
-private fun ServerFileRow(
-    file: TableFile,
-    transfer: TransferRecord?,
-    now: Instant,
-    onDownload: () -> Unit,
-) {
-    Row(
-        modifier = Modifier.fillMaxWidth(),
-        verticalAlignment = Alignment.CenterVertically,
-    ) {
-        Column(Modifier.weight(1f)) {
-            Text(file.name, style = MaterialTheme.typography.bodyLarge, maxLines = 1, overflow = TextOverflow.Ellipsis)
-            Text(describe(file, now), style = MaterialTheme.typography.bodySmall)
-            // Conformance rule 15: an uploading file shows live progress and downloads anyway.
-            if (file.state == FileState.UPLOADING) {
-                Progress(file.bytesReceived, file.size)
-            }
-        }
-        Spacer(Modifier.width(12.dp))
-        val downloading = transfer?.takeIf { it.direction == TransferDirection.DOWNLOAD }
-        if (downloading == null || downloading.state == TransferState.FAILED) {
-            Button(onClick = onDownload) { Text("Take") }
-        } else {
-            Text(label(downloading), style = MaterialTheme.typography.bodySmall)
-        }
-    }
-}
-
-@Composable
-private fun TransferRow(
-    transfer: TransferRecord,
-    gone: Boolean,
-    onReveal: (() -> Unit)?,
-    onRetry: () -> Unit,
-    onDismiss: () -> Unit,
-) {
-    Row(
-        modifier = Modifier.fillMaxWidth(),
-        verticalAlignment = Alignment.CenterVertically,
-    ) {
-        Column(Modifier.weight(1f)) {
-            Text(
-                "${arrow(transfer.direction)} ${transfer.name}",
-                style = MaterialTheme.typography.bodyLarge,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
-            )
-            Text(label(transfer, gone), style = MaterialTheme.typography.bodySmall)
-            if (transfer.state == TransferState.RUNNING || transfer.state == TransferState.VERIFYING) {
-                Progress(transfer.bytesDone, transfer.size)
-            }
-            transfer.failure?.let { failure ->
-                Text(failure.message, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.error)
-            }
-        }
-        if (transfer.state == TransferState.FAILED) {
-            IconAction(Icons.Filled.Refresh, "Retry now", onRetry)
-        }
-        // UI.md §5: the landed row's action, and it goes away with the file it would show.
-        if (onReveal != null && transfer.state == TransferState.DONE &&
-            transfer.publishedUri != null && !gone
-        ) {
-            IconAction(Icons.Filled.FolderOpen, "Show in folder", onReveal)
-        }
-        if (transfer.isFinished) {
-            IconAction(Icons.Filled.Close, "Dismiss", onDismiss)
-        }
-    }
-}
-
-@Composable
-private fun IconAction(icon: ImageVector, description: String, onClick: () -> Unit) =
-    IconButton(onClick = onClick) { Icon(icon, contentDescription = description) }
-
-@Composable
-private fun Progress(done: Long, total: Long) {
-    val fraction = if (total > 0) (done.toFloat() / total).coerceIn(0f, 1f) else 0f
-    LinearProgressIndicator(progress = { fraction }, modifier = Modifier.fillMaxWidth().padding(top = 4.dp))
-}
-
-@Composable
-private fun SectionHeader(text: String, action: @Composable () -> Unit = {}) = Row(
-    modifier = Modifier.fillMaxWidth(),
-    verticalAlignment = Alignment.CenterVertically,
-) {
-    Text(text, style = MaterialTheme.typography.titleSmall, color = MaterialTheme.colorScheme.primary)
-    Spacer(Modifier.weight(1f))
-    action()
-}
-
-@Composable
-private fun Banner(message: String) = Text(
-    text = message,
-    style = MaterialTheme.typography.bodySmall,
-    color = MaterialTheme.colorScheme.onErrorContainer,
-    modifier = Modifier
-        .fillMaxWidth()
-        .background(MaterialTheme.colorScheme.errorContainer)
-        .padding(horizontal = 16.dp, vertical = 8.dp),
-)
-
-@Composable
-private fun NotConfigured(onOpenSettings: () -> Unit) = Column(
-    modifier = Modifier.fillMaxSize().padding(24.dp),
-    verticalArrangement = Arrangement.Center,
-    horizontalAlignment = Alignment.CenterHorizontally,
-) {
-    Text("No server yet.", style = MaterialTheme.typography.titleMedium)
-    Text("Add a host URL and API key to see what's on the table.", style = MaterialTheme.typography.bodyMedium)
-    Spacer(Modifier.height(16.dp))
-    Button(onClick = onOpenSettings) { Text("Open settings") }
-}
-
-private fun showDownloadsFolder(context: Context, intent: Intent, viewModel: MainViewModel) {
-    runCatching { context.startActivity(intent) }.onFailure { viewModel.reportRevealFailed() }
-}
-
 private const val NOTICE_MILLIS = 6_000L
-
-private fun arrow(direction: TransferDirection) =
-    if (direction == TransferDirection.UPLOAD) "↑" else "↓"
-
-private fun describe(file: TableFile, now: Instant): String = when (file.state) {
-    // Rule 15: no TTL until the upload finalizes, so there is nothing to count down yet.
-    FileState.UPLOADING -> "${formatBytes(file.bytesReceived)} of ${formatBytes(file.size)} · uploading"
-    FileState.AVAILABLE -> listOfNotNull(
-        formatBytes(file.size),
-        formatExpiry(file.expiresAt, now),
-    ).joinToString(" · ")
-}
-
-private fun label(transfer: TransferRecord, gone: Boolean = false): String = when (transfer.state) {
-    TransferState.QUEUED -> "Queued"
-    TransferState.RUNNING -> "${formatBytes(transfer.bytesDone)} of ${formatBytes(transfer.size)}"
-    TransferState.VERIFYING ->
-        if (transfer.direction == TransferDirection.UPLOAD) "Finishing" else "Verifying"
-
-    TransferState.DONE -> when {
-        transfer.publishedName == null -> "Sent"
-        gone -> "moved or deleted"
-        else -> "Saved to Downloads as ${transfer.publishedName}"
-    }
-    // WorkManager owns the retry; the button is only for someone who would rather not wait.
-    TransferState.FAILED -> if (transfer.failure?.retryable == true) "Retrying soon" else "Failed"
-}

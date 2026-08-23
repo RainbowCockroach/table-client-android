@@ -14,7 +14,7 @@ Prerequisite: a working `table-server` (local dev build is enough).
 | C4 | Uploads with resume; WorkManager wiring (queue survives process kill); `androidx.work.testing` smoke test | manual kill-and-resume + smoke test green | done |
 | C5 | Share-sheet intake, notifications, polish (expiry countdowns, download-all, Wi-Fi-only toggle) | manual release pass (DESIGN.md §7) | done |
 | C6 | Release CI: every push to `main` publishes one signed APK as the sole GitHub Release | a run produces an installable APK | done |
-| C7 | **Adopt `../UI.md`**: shelf under 900dp and the rail at or above it (there is no tablet layout today — the phone layout runs at every width); icon pass; reveal-in-folder on landed rows (**done 2026-08-23**, see the log); palette + authored dark mode from `../tokens.json`, seeding a static `ColorScheme` (dynamic colour deliberately not adopted) | `UI.md` §11 checklist holds on a phone and on a tablet in both orientations; manual pass | in progress |
+| C7 | **Adopt `../UI.md`**: shelf under 900dp and the rail at or above it (there is no tablet layout today — the phone layout runs at every width); icon pass; reveal-in-folder on landed rows (**done 2026-08-23**, see the log); palette + authored dark mode from `../tokens.json`, seeding a static `ColorScheme` (dynamic colour deliberately not adopted); §11 shape and depth — `CircleShape` on icon buttons (M3 Button is already full-round) and `buttonElevation(default 2.dp, pressed 0.dp)`, letting M3 tonal elevation handle dark rather than hand-authoring a dark shadow | `UI.md` §12 checklist holds on a phone and on a tablet in both orientations; manual pass | staged for review |
 
 Status values: `not started` → `in progress` → `staged for review` → `done` (user committed).
 
@@ -384,11 +384,61 @@ having on a large upload, which raises it from cosmetic to the main reason to fi
   (5) No test: `Intent`, `PackageManager` and `MediaStore` are all outside the JVM suite and
   DESIGN §7 puts them in the manual pass.
 
+- **2026-08-24 — C7: the shelf, the rail, the palette, and §11's shape and depth.** The rest of
+  `../UI.md`, in one pass. **Layout**: a root `BoxWithConstraints` reads the width the app
+  actually has and flips at `900dp` — shelf below, rail at or above — so freeform, split-screen
+  and a phone all reach the compact layout through one code path and there is no `isPhone`
+  anywhere (rule 1). The queue stopped being a section inside the table's scroll and became a
+  panel with its own `LazyColumn` in both layouts (rules 2, 3): `QueueRail` is 380–480 floor to
+  ceiling with `Nothing moving` when it is empty, `QueueShelf` docks to the bottom edge, peeks at
+  two rows, drags to 60% of the window, collapses to its header, floats over the table rather
+  than pushing it, and is absent entirely when the queue is empty (rule 6). At rail width the
+  action bar and the notice lane belong to the table's column, not the window (§1). The row
+  column caps at 720 inside a region ground that spans the column, so the margins absorb a
+  tablet's extra width (rule 5). **Regions**: the identity bar lost its wordmark and became §2's
+  action bar — the intake centred as the app's only filled button, settings trailing, no divider
+  beneath (§11.4). **Rows**: one `FileRow` skeleton draws both sides (rule 7) — glyph, name, meta
+  line, progress rule, trailing slot; the trailing slot is now `[state action] + [dismiss]` in
+  every state, which gives an in-flight row the stop it was missing (rule 8); the row body opens
+  a landed file (rule 9, verified against the system resolver); *Take* dropped its word for §6's
+  glyph. **Colour**: `../tokens.json` is now the whole palette — a `TableColors` holding every
+  token light and dark, seeding a static `ColorScheme` and riding beside it in
+  `LocalTableColors`. Dynamic colour is gone (§10), `forceDarkAllowed` is off, and
+  `UiModeManager.getContrast` drops the brand layer where the OS asks for contrast (rule 17).
+  **Shape and depth** (§11): `RaisedIconButton` is a 40 circle in a 44 hit rectangle on a 2px
+  wall that collapses under the press while the button travels the same 2px; `GhostIconButton`
+  (dismiss) never gets a cap; *Take all* and *Clear* became real pills instead of text links, so
+  the section header grew to 52 to clear a control and its wall. Region grounds are wells at 6%
+  over the top 2px; region boundaries take the seam, row separators keep the plain hairline.
+  **79 JVM tests, 77 passed against a live dev server** (one skipped: scenario 07 wants a short
+  TTL and the manual pass wanted a long one), `assembleDebug` green.
+  **Verified on the API 36 emulator against a live dev server**: phone at 411dp — action bar,
+  notice lane, table rows, take, the shelf peeking at two rows, dragging to 60% and collapsing;
+  tablet at 1706x1066dp — the rail floor to ceiling with the bars inside the table's column and
+  the rows centred under the 720 cap; authored dark at both widths; tapping a landed `notes.txt`
+  row body opened the system resolver.
+  **Reviewer, judgement calls:** (1) **`../UI.md` §7's state strings are deliberately not
+  adopted** — the user's call this session: they are placeholder wording, and this client keeps
+  its own (`Queued`, `Verifying`, `Saved to Downloads as …`). Rule 14 is knowingly open; do not
+  "fix" it without asking. (2) A landed **upload** row *opens* its source rather than revealing
+  it: the source is a `content://` grant inside whichever app the picker came from, and no file
+  manager can be pointed at it — the same substitution §5 makes for iOS, and it is recorded in
+  DESIGN §4. (3) The table row's take button is absent, not disabled, while that file is in the
+  queue, and the queue row's state joins the table row's meta line — a status word in the
+  trailing slot would have broken rule 8. (4) Dismissing an in-flight download leaves its partial
+  temp file in `cacheDir` until the OS sweeps the cache; a dedicated sweeper is not worth the
+  code for a directory Android already reclaims. (5) The rail is not drag-resizable — §2 asks for
+  that only where the platform has pointer resize — and takes 32% of the width inside 380–480.
+  (6) Region 5, the drop surface, is not built; DESIGN §5 records why it is its own checkpoint.
+  (7) No tests: every line here is Compose, and DESIGN §7 rules out UI automation.
+
 ## Pending device checks
 
 Carried from the entries above; none is blocked, all need an emulator or phone.
 
-1. The icon-button and wording pass on the main screen (2026-07-30).
+1. The main screen on a real device: the whole C7 layout was checked on the emulator, so what
+   is left is a phone in the hand and a real tablet in both orientations (2026-08-24, replacing
+   the 2026-07-30 icon-button pass, whose screen no longer exists).
 2. The ongoing progress notification disappearing on completion, both directions (2026-07-30).
 3. A full transfer pass on the **minified** release APK (2026-07-31).
 4. The battery notice: shown while optimized, gone after the exemption is granted, and — with
