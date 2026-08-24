@@ -8,7 +8,7 @@ import java.io.IOException
 /** What came of an intake: [queued] files are in the queue, [rejected] ones never will be. */
 data class IntakeResult(val queued: List<String>, val rejected: Int)
 
-/** Turns picked or shared URIs into queued uploads. */
+/** Rule 16's ladder: what an entry point offers, resolved per item into queued uploads. */
 class UploadIntake(
     private val resolver: ContentResolver,
     private val queue: TransferQueue,
@@ -29,6 +29,22 @@ class UploadIntake(
             queued += described.name
         }
         return IntakeResult(queued, rejected)
+    }
+
+    /**
+     * Rung 3 of rule 16's ladder: text becomes a `.txt` file of its own.
+     *
+     * [offered] is the sender's own name for it where there is one. Text with nothing but
+     * whitespace in it is refused here, before it can become a row holding an empty file.
+     */
+    suspend fun accept(text: String, offered: String? = null): IntakeResult {
+        if (text.isBlank()) return IntakeResult(queued = emptyList(), rejected = 1)
+        val bytes = textUploadBytes(text)
+        val source = runCatching { stagedSourceUri(staging.stage { bytes.inputStream() }) }
+            .getOrNull() ?: return IntakeResult(queued = emptyList(), rejected = 1)
+        val name = textUploadName(text, offered)
+        queue.upload(source, name, bytes.size.toLong())
+        return IntakeResult(queued = listOf(name), rejected = 0)
     }
 
     /**

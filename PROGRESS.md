@@ -15,7 +15,7 @@ Prerequisite: a working `table-server` (local dev build is enough).
 | C5 | Share-sheet intake, notifications, polish (expiry countdowns, download-all, Wi-Fi-only toggle) | manual release pass (DESIGN.md §7) | done |
 | C6 | Release CI: every push to `main` publishes one signed APK as the sole GitHub Release | a run produces an installable APK | done |
 | C7 | **Adopt `../UI.md`**: shelf under 900dp and the rail at or above it (there is no tablet layout today — the phone layout runs at every width); icon pass; reveal-in-folder on landed rows (**done 2026-08-23**, see the log); palette + authored dark mode from `../tokens.json`, seeding a static `ColorScheme` (dynamic colour deliberately not adopted); §11 shape and depth — `CircleShape` on icon buttons (M3 Button is already full-round) and `buttonElevation(default 2.dp, pressed 0.dp)`, letting M3 tonal elevation handle dark rather than hand-authoring a dark shadow | `UI.md` §12 checklist holds on a phone and on a tablet in both orientations; manual pass | staged for review |
-| C8 | **Intake ladder, text rung** (`../DESIGN.md` §3 rules 16–23). `UploadIntake` gains a text entry beside `accept(uris)`: UTF-8 with no BOM (rule 21) through `staging.stage { bytes.inputStream() }` → `stagedSourceUri` → `queue.upload(uri, name, size)`, named by rule 22 (first non-empty line → 30 chars → `safeDisplayName` → `.txt`, timestamp fallback when the line is unusable), blank-or-whitespace text rejected before it becomes a row rather than after. `ShareActivity` reads `EXTRA_TEXT`, preferring `EXTRA_SUBJECT` for the name when the sender offers one, with `EXTRA_STREAM` still taking precedence when both are present. No new machinery — see the note in `DESIGN.md` §4 | manual: select a line in a note app → Share → **table** → a `.txt` reaches the table named after the line; sharing a photo *with* a caption still sends the photo; sharing a blank selection is refused with a sentence, not a queued row | not started |
+| C8 | **Intake ladder, text rung** (`../DESIGN.md` §3 rules 16–23). `UploadIntake` gains a text entry beside `accept(uris)`: UTF-8 with no BOM (rule 21) through `staging.stage { bytes.inputStream() }` → `stagedSourceUri` → `queue.upload(uri, name, size)`, named by rule 22 (first non-empty line → 30 chars → `safeDisplayName` → `.txt`, timestamp fallback when the line is unusable), blank-or-whitespace text rejected before it becomes a row rather than after. `ShareActivity` reads `EXTRA_TEXT`, preferring `EXTRA_SUBJECT` for the name when the sender offers one, with `EXTRA_STREAM` still taking precedence when both are present. No new machinery — see the note in `DESIGN.md` §4 | manual: select a line in a note app → Share → **table** → a `.txt` reaches the table named after the line; sharing a photo *with* a caption still sends the photo; sharing a blank selection is refused with a sentence, not a queued row | staged for review |
 | C9 | **Paste** (`../UI.md` §2's leading flank, §6's `paste` glyph, checklist 27–30) and the image rung. An icon-only control mirroring settings; enabled state from `getPrimaryClipDescription()` — toast-free, and recomputed on resume because API 29+ returns null without focus — and `getPrimaryClip()` read only on the tap. The image rung stages the clip's `content://` bytes unchanged (rule 20, no re-encode) | manual: copy a screenshot, then a line of text, each reaching the table with the right extension; the *"table pasted from your clipboard"* toast appears and is expected; the control is disabled on an empty clipboard rather than showing a notice | not started |
 
 Status values: `not started` → `in progress` → `staged for review` → `done` (user committed).
@@ -460,6 +460,49 @@ having on a large upload, which raises it from cosmetic to the main reason to fi
   in the share sheet and then refused with *"Nothing to put on the table."* That is C8. No Android
   code was touched this session; nothing to build, nothing to install.
 
+- **2026-08-24 — C8, the text rung of the intake ladder, staged.** New `transfer/TextUploads.kt`
+  holds rules 21 and 22 as two pure functions: `textUploadBytes` (UTF-8, no BOM) and
+  `textUploadName`, which takes the first non-empty line, clips it to 30 characters without
+  splitting a surrogate pair, and runs it through the download path's own sanitiser — now
+  `sanitizedName` in `DisplayNames.kt`, with `safeDisplayName` its `download` fallback, so one
+  sanitiser still serves both. `UploadIntake` gained `accept(text, offered)` beside
+  `accept(uris)`: blank text is refused before it can become a row, and the rest goes
+  `staging.stage { bytes.inputStream() }` → `stagedSourceUri` → `queue.upload`, no new
+  machinery as DESIGN §4 promised. `ShareActivity` now reads `EXTRA_TEXT` when `EXTRA_STREAM`
+  is empty (rung 1 before rung 3: a photo shared with a caption is a photo) and prefers
+  `EXTRA_SUBJECT` for the name, and — found on the emulator, see below — falls through from an
+  unreadable stream to the text rather than failing the intake (rule 17). **92 JVM tests green**
+  (81 + 11) against a dev server, `assembleDebug` clean, and **run on the API 36 emulator**:
+  a two-line share landed as `Milk and bread.txt` byte-for-byte (no BOM); a share with a subject
+  landed as `Example Domain.txt` carrying the URL; a whitespace-only share was turned away with
+  *"Nothing to put on the table."* and queued nothing; a real share sheet from the Files app sent
+  `picture.png` unchanged (7858 bytes, rule 19); and a `.txt` taken back down arrived in
+  `Download/` with exactly its text. The one corner the emulator cannot stage — a *readable*
+  stream shared together with a caption — is pending check 8 below.
+  **Reviewer, judgement calls:** (0) **Rule 17 was missing and is now in.** The first device run
+  shared a photo *with* a caption; the stream could not be read and the intake answered
+  *"Couldn't add 1 file(s)."* — but rule 17 says a rung that is offered and fails to read falls
+  through to the next. `ShareActivity.ladder` now runs the text rung when the streams queue
+  nothing, which is also what makes the emulator's ungrantable media URI a *positive* test of
+  rule 17: the caption became `a caption for the photo.txt`. The ladder's ordering lives in the
+  activity because a share is the only entry point today offering two representations of one
+  item; C9's clipboard offers several at once, and that is when it lifts into `UploadIntake`.
+  (1) **The root spec gained one clause.** Rule 22 named a
+  fallback for images and none for text, so `../DESIGN.md` §3 rule 22 now says text whose line
+  survives neither the trim nor the sanitiser takes `Text YYYY-MM-DD HH-MM-SS` — the same shape
+  with the right noun, written into the shared rule rather than decided quietly on one client.
+  (2) **A pasted URL keeps its colon**: the shared sanitiser flattens separators and control
+  characters only, so `https://example.com/a` is named `https:__example.com_a.txt`. Rule 22
+  forbids colons in the *timestamp*; a name the user's own text produced is sanitised again by
+  whichever client writes it to disk. (3) **Text is read from `ACTION_SEND` only.** A
+  `SEND_MULTIPLE` may in principle carry a `CharSequence` list, but no share sheet produces one,
+  and folding several results into one `IntakeResult` is machinery for a case that does not
+  arise. Streams still take both actions. (4) `UploadIntake` is Android-typed on rung 1 alone,
+  so the new tests construct it with a bare `ContentResolver` subclass the text rung never
+  touches — that is what lets the rung be tested under JVM at all. (5) The blank-text sentence
+  stays *"Nothing to put on the table."*: from the sender's side a whitespace selection and an
+  empty share are the same event.
+
 ## Pending device checks
 
 Carried from the entries above; none is blocked, all need an emulator or phone.
@@ -477,3 +520,6 @@ Carried from the entries above; none is blocked, all need an emulator or phone.
    deleted` with only its dismiss left (2026-08-23).
 6. An upload of this device's own, watched on the table: the row's bytes and bar must track the
    shelf's rather than sitting at `0 B`, and no take button until it lands (2026-08-24).
+7. A photo shared *with* a caption from a real sender (Google Photos, Gmail) must still send
+   the photo: the emulator cannot grant a media URI to an `adb`-injected share, so rung 1
+   winning over a *readable* stream's caption is the one branch not yet seen run (2026-08-24).

@@ -9,12 +9,15 @@ private const val MAX_SUFFIXES = 10_000
  * The name travels from whatever device uploaded it, so it may hold path separators or
  * control characters that would escape the Downloads directory.
  */
-fun safeDisplayName(name: String): String {
+fun safeDisplayName(name: String): String = sanitizedName(name) ?: FALLBACK_NAME
+
+/** The same sanitiser without the download path's fallback; null when nothing usable is left. */
+internal fun sanitizedName(name: String): String? {
     val flattened = name.map { if (it == '/' || it == '\\' || it.isISOControl()) '_' else it }
         .joinToString("")
         .trim()
         .trimEnd('.')
-    return if (flattened.isEmpty() || flattened.all { it == '.' || it == '_' }) FALLBACK_NAME else flattened
+    return if (flattened.isEmpty() || flattened.all { it == '.' || it == '_' }) null else flattened
 }
 
 /**
