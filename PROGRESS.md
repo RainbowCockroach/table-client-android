@@ -15,6 +15,8 @@ Prerequisite: a working `table-server` (local dev build is enough).
 | C5 | Share-sheet intake, notifications, polish (expiry countdowns, download-all, Wi-Fi-only toggle) | manual release pass (DESIGN.md §7) | done |
 | C6 | Release CI: every push to `main` publishes one signed APK as the sole GitHub Release | a run produces an installable APK | done |
 | C7 | **Adopt `../UI.md`**: shelf under 900dp and the rail at or above it (there is no tablet layout today — the phone layout runs at every width); icon pass; reveal-in-folder on landed rows (**done 2026-08-23**, see the log); palette + authored dark mode from `../tokens.json`, seeding a static `ColorScheme` (dynamic colour deliberately not adopted); §11 shape and depth — `CircleShape` on icon buttons (M3 Button is already full-round) and `buttonElevation(default 2.dp, pressed 0.dp)`, letting M3 tonal elevation handle dark rather than hand-authoring a dark shadow | `UI.md` §12 checklist holds on a phone and on a tablet in both orientations; manual pass | staged for review |
+| C8 | **Intake ladder, text rung** (`../DESIGN.md` §3 rules 16–23). `UploadIntake` gains a text entry beside `accept(uris)`: UTF-8 with no BOM (rule 21) through `staging.stage { bytes.inputStream() }` → `stagedSourceUri` → `queue.upload(uri, name, size)`, named by rule 22 (first non-empty line → 30 chars → `safeDisplayName` → `.txt`, timestamp fallback when the line is unusable), blank-or-whitespace text rejected before it becomes a row rather than after. `ShareActivity` reads `EXTRA_TEXT`, preferring `EXTRA_SUBJECT` for the name when the sender offers one, with `EXTRA_STREAM` still taking precedence when both are present. No new machinery — see the note in `DESIGN.md` §4 | manual: select a line in a note app → Share → **table** → a `.txt` reaches the table named after the line; sharing a photo *with* a caption still sends the photo; sharing a blank selection is refused with a sentence, not a queued row | not started |
+| C9 | **Paste** (`../UI.md` §2's leading flank, §6's `paste` glyph, checklist 27–30) and the image rung. An icon-only control mirroring settings; enabled state from `getPrimaryClipDescription()` — toast-free, and recomputed on resume because API 29+ returns null without focus — and `getPrimaryClip()` read only on the tap. The image rung stages the clip's `content://` bytes unchanged (rule 20, no re-encode) | manual: copy a screenshot, then a line of text, each reaching the table with the right extension; the *"table pasted from your clipboard"* toast appears and is expected; the control is disabled on an empty clipboard rather than showing a notice | not started |
 
 Status values: `not started` → `in progress` → `staged for review` → `done` (user committed).
 
@@ -445,6 +447,18 @@ having on a large upload, which raises it from cosmetic to the main reason to fi
   what this device is still sending was the same round trip twice. New `MetaLinesTest` covers the
   three meta lines; `assembleDebug` clean. **Reviewer:** unstaged tree, one new test file. Not seen
   on a device — no phone was attached, so it is in the pending list below.
+
+- **2026-08-24 — the intake ladder specified; a live share-sheet dead end found (docs only, no
+  code).** `../DESIGN.md` §3 gained an **Intake** group, rules 16–23: one ladder — files → image →
+  plain text — behind all four entry points, resolved per item, falling through on a read failure
+  rather than failing the intake, with one shared naming rule and a metadata-is-free-bytes-are-not
+  privacy rule. `../UI.md` gained the paste control (§2's leading flank, §6's thirteenth glyph and
+  its wordless exception, §8's notice, §11.5's Apple caution, checklist 27–30) and promoted the
+  `260` pill cap into §3, because §2's flank arithmetic now depends on it. **Found while answering
+  a question, verified from code, not yet seen on a device:** `ShareActivity.sharedUris` reads only
+  `EXTRA_STREAM`, and the manifest filter is `*/*` — so sharing selected text to table is offered
+  in the share sheet and then refused with *"Nothing to put on the table."* That is C8. No Android
+  code was touched this session; nothing to build, nothing to install.
 
 ## Pending device checks
 
