@@ -133,24 +133,29 @@ fun ServerFileRow(
     modifier: Modifier = Modifier,
 ) {
     val arriving = file.state == FileState.UPLOADING
-    val downloading = transfer?.takeIf {
-        it.direction == TransferDirection.DOWNLOAD && !it.isFinished
-    }
+    val moving = transfer?.takeIf { !it.isFinished }
+    val downloading = moving?.takeIf { it.direction == TransferDirection.DOWNLOAD }
+    // The server commits `bytes_received` when a PATCH ends, not as it streams (root DESIGN §2),
+    // so while this device is the sender its own count is the live one and the listing's is stale.
+    val sending = moving?.takeIf { it.direction == TransferDirection.UPLOAD }
+    val received = maxOf(file.bytesReceived, sending?.bytesDone ?: 0L)
     FileRow(
         modifier = modifier,
         glyph = Glyphs.File,
         glyphTint = tableColors.ink3,
         name = file.name,
-        meta = listOfNotNull(describe(file, now), downloading?.let(::label)).joinToString(" · "),
+        meta = listOfNotNull(describe(file, now, received), downloading?.let(::label))
+            .joinToString(" · "),
         // §10: an arriving row sits on butter ground — a 3px bar could not carry it.
         ground = if (arriving) tableColors.butterTint else Color.Transparent,
         tag = if (arriving) "arriving" else null,
-        progress = if (arriving) fraction(file.bytesReceived, file.size) else null,
+        progress = if (arriving) fraction(received, file.size) else null,
         progressColor = tableColors.butter,
         trackColor = tableColors.butterLine,
     ) {
-        // §4: while it is in the queue the transfer row is what says so; there is nothing to do here.
-        if (downloading == null) {
+        // §4: while it is in the queue the transfer row is what says so — taking a file this
+        // device is still sending is the same round trip twice.
+        if (moving == null) {
             RaisedIconButton(Glyphs.Take, "Take ${file.name}", onTake)
         }
     }

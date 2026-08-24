@@ -432,6 +432,20 @@ having on a large upload, which raises it from cosmetic to the main reason to fi
   (6) Region 5, the drop surface, is not built; DESIGN §5 records why it is its own checkpoint.
   (7) No tests: every line here is Compose, and DESIGN §7 rules out UI automation.
 
+- **2026-08-24 — an own upload on the table read `0 B` (bug fix, no checkpoint).** From a
+  screenshot: the table row said `0 B of 7.9 MB · uploading` with a frozen bar and its `arriving`
+  tag while the shelf, one region below, correctly read `3.1 MB of 7.9 MB`. The server writes
+  `bytes_received` only when a `PATCH` ends and a whole file goes up in one, so the listing had
+  nothing better to say — fixed there too (`../table-server`, same date). This side: `ServerFileRow`
+  matches the file to a live transfer of its own (the upload session id *is* the file id) and takes
+  `max(listing, ours)` for the meta line and the bar, which also carries the row across the 5s poll
+  interval; `describe` takes the byte count as a parameter for it. §7's strings are untouched — the
+  numbers were wrong, not the words, and `arriving` is what an uploading file says. The take button
+  now goes for *any* unfinished transfer on that file, not only a download: offering to fetch back
+  what this device is still sending was the same round trip twice. New `MetaLinesTest` covers the
+  three meta lines; `assembleDebug` clean. **Reviewer:** unstaged tree, one new test file. Not seen
+  on a device — no phone was attached, so it is in the pending list below.
+
 ## Pending device checks
 
 Carried from the entries above; none is blocked, all need an emulator or phone.
@@ -447,3 +461,5 @@ Carried from the entries above; none is blocked, all need an emulator or phone.
 5. Reveal end to end: take a file, tap **Show in folder**, and confirm the Files app opens at
    `Download/`; then delete the file from there and confirm the row turns into `moved or
    deleted` with only its dismiss left (2026-08-23).
+6. An upload of this device's own, watched on the table: the row's bytes and bar must track the
+   shelf's rather than sitting at `0 B`, and no take button until it lands (2026-08-24).

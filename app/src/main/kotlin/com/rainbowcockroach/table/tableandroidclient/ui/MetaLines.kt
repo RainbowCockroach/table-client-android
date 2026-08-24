@@ -7,10 +7,18 @@ import com.rainbowcockroach.table.tableandroidclient.transfer.TransferRecord
 import com.rainbowcockroach.table.tableandroidclient.transfer.TransferState
 import java.time.Instant
 
-/** `../UI.md` §4's second line: `size · time` on the table. */
-internal fun describe(file: TableFile, now: Instant): String = when (file.state) {
+/**
+ * `../UI.md` §4's second line: `size · time` on the table.
+ *
+ * [bytesReceived] is the listing's figure unless the caller holds a fresher one.
+ */
+internal fun describe(
+    file: TableFile,
+    now: Instant,
+    bytesReceived: Long = file.bytesReceived,
+): String = when (file.state) {
     // Rule 15: no TTL until the upload finalizes, so there is nothing to count down yet.
-    FileState.UPLOADING -> "${formatBytes(file.bytesReceived)} of ${formatBytes(file.size)} · uploading"
+    FileState.UPLOADING -> "${formatBytes(bytesReceived)} of ${formatBytes(file.size)} · uploading"
     FileState.AVAILABLE -> listOfNotNull(
         formatBytes(file.size),
         formatExpiry(file.expiresAt, now),
